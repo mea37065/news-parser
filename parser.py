@@ -3,8 +3,10 @@ import requests
 import json
 import hashlib
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from html import unescape
 
 from ai_generator import generate_post
 from devto_publisher import publish_to_devto
@@ -17,6 +19,13 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "YOUR_CHAT_ID")
 
 SEEN_FILE    = Path(__file__).parent / "seen.json"
 PENDING_FILE = Path(__file__).parent / "pending.json"
+
+def strip_html(text: str) -> str:
+    """Видаляє HTML теги з тексту RSS summary."""
+    text = unescape(text)                        # &amp; → &  etc
+    text = re.sub(r'<[^>]+>', ' ', text)         # <strong> → пробіл
+    text = re.sub(r'\s+', ' ', text).strip()    # зайві пробіли
+    return text
 
 # ─────────────────────────────────────────
 #  RSS FEEDS
@@ -88,7 +97,7 @@ def parse_feeds() -> list[dict]:
                 "tags":    feed_cfg["tags"],
                 "title":   entry.get("title", "No title"),
                 "url":     url,
-                "summary": entry.get("summary", "")[:500].strip(),
+                "summary": strip_html(entry.get("summary", ""))[:500].strip(),
                 "date":    pub_date,
             })
             seen.add(article_id)
@@ -223,14 +232,14 @@ def main():
 
     for i, article in enumerate(articles, 1):
         print(f"\n📰 ({i}/{len(articles)}) {article['title'][:60]}…")
-        print(f"   🤖 Generating post via Gemini...")
+        print(f"   🤖 Generating post via Groq AI...")
         post = generate_post(article)
 
         if post:
             ai_count += 1
         else:
             # Fallback — якщо Gemini не відповів, відправляємо оригінальний текст
-            print(f"   ⚠️ Gemini unavailable — using original summary")
+            print(f"   ⚠️ AI unavailable — using original summary")
             post = {
                 "title":      article["title"],
                 "body":       article["summary"] or "No summary available.",
