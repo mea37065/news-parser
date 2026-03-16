@@ -1,0 +1,41 @@
+name: Daily News Parser
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # щодня о 09:00 за Києвом (UTC+2)
+  workflow_dispatch:        # ручний запуск з GitHub UI
+
+jobs:
+  run-parser:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run parser
+        run: python parser.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          DEVTO_API_KEY:      ${{ secrets.DEVTO_API_KEY }}
+
+      - name: Save seen.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen.json pending.json || true
+          git diff --staged --quiet || git commit -m "chore: update seen/pending [skip ci]"
+          git push
