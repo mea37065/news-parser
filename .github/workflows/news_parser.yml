@@ -2,12 +2,13 @@ name: Daily News Parser
 
 on:
   schedule:
-    - cron: '0 7 * * *'   # щодня о 09:00 за Києвом (UTC+2)
-  workflow_dispatch:        # ручний запуск з GitHub UI
+    - cron: '0 7 * * *'
+  workflow_dispatch:
 
 jobs:
   run-parser:
     runs-on: ubuntu-latest
+    timeout-minutes: 5        # ← вбиває job якщо висить більше 5 хвилин
 
     permissions:
       contents: write
@@ -24,13 +25,44 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run parser
-        run: python parser.py
+      - name: Test Telegram connection
+        run: |
+          python3 -c "
+          import requests, os
+          token = os.environ['TELEGRAM_BOT_TOKEN']
+          chat  = os.environ['TELEGRAM_CHAT_ID']
+          r = requests.post(
+            f'https://api.telegram.org/bot{token}/sendMessage',
+            json={'chat_id': chat, 'text': '✅ GitHub Actions: connected, starting parser...'},
+            timeout=10
+          )
+          print('Telegram:', r.status_code, r.text[:200])
+          "
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Test RSS feeds
+        run: |
+          python3 -c "
+          import feedparser
+          feeds = [
+            ('Hacker News', 'https://hnrss.org/frontpage'),
+            ('Krebs',       'https://krebsonsecurity.com/feed/'),
+          ]
+          for name, url in feeds:
+            f = feedparser.parse(url)
+            print(f'{name}: {len(f.entries)} entries')
+          "
+
+      - name: Run parser
+        run: python parser.py
+        timeout-minutes: 4    # ← parser не може висіти більше 4 хвилин
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           DEVTO_API_KEY:      ${{ secrets.DEVTO_API_KEY }}
+          # GEMINI_API_KEY не передаємо — AI вимкнений поки не налагодимо
 
       - name: Save seen.json
         run: |
