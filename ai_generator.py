@@ -1,5 +1,6 @@
 import requests
 import os
+import time
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 
@@ -7,6 +8,10 @@ GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-2.0-flash:generateContent?key=" + GEMINI_API_KEY
 )
+
+# Gemini free tier: 15 requests/min → чекаємо 5 секунд між запитами
+DELAY_BETWEEN_REQUESTS = 5   # секунд
+MAX_RETRIES            = 3   # спроби при 429
 
 MEDIUM_PROMPT = """
 You are a technical blog writer specialising in cybersecurity and DevOps.
@@ -45,27 +50,42 @@ def generate_post(article: dict) -> dict | None:
         },
     }
 
-    try:
-        resp = requests.post(GEMINI_URL, json=payload, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            # Пауза перед кожним запитом щоб не перевищити 15 req/min
+            time.sleep(DELAY_BETWEEN_REQUESTS)
 
-        tags = []
-        body = text
-        if "Tags:" in text:
-            parts = text.rsplit("Tags:", 1)
-            body = parts[0].strip()
-            raw_tags = parts[1].strip()
-            tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+            resp = requests.post(GEMINI_URL, json=payload, timeout=30)
 
-        return {
-            "title":      article["title"],
-            "body":       body,
-            "tags":       tags,
-            "source_url": article["url"],
-        }
+            # Якщо 429 — чекаємо довше і пробуємо ще раз
+            if resp.status_code == 429:
+                wait = 15 * attempt  # 15s, 30s, 45s
+                print(f"   ⏳ Rate limit hit, waiting {wait}s (attempt {attempt}/{MAX_RETRIES})...")
+                time.sleep(wait)
+                continue
 
-    except Exception as e:
-        print(f"   ❌ Gemini API error: {e}")
-        return None
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+            tags = []
+            body = text
+            if "Tags:" in text:
+                parts = text.rsplit("Tags:", 1)
+                body = parts[0].strip()
+                raw_tags = parts[1].strip()
+                tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+
+            return {
+                "title":      article["title"],
+                "body":       body,
+                "tags":       tags,
+                "source_url": article["url"],
+            }
+
+        except Exception as e:
+            print(f"   ❌ Gemini API error (attempt {attempt}/{MAX_RETRIES}): {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(10)
+
+    return None
