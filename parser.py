@@ -99,19 +99,19 @@ def parse_feeds() -> list[dict]:
 # ─────────────────────────────────────────
 #  TELEGRAM
 # ─────────────────────────────────────────
-def escape_md(text: str) -> str:
-    special = r"\_*[]()~`>#+-=|{}.!"
-    return "".join(f"\\{c}" if c in special else c for c in text)
+def escape_html(text: str) -> str:
+    return text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
 
 def send_to_telegram_with_buttons(article: dict, post: dict, post_id: str):
     tags_str = " ".join(f"#{t}" for t in article["tags"])
     date_str = f"📅 {article['date']}\n" if article["date"] else ""
     preview  = post["body"][:300].strip()
+    url      = article["url"]
     text = (
         f"{article['source']}\n"
         f"{date_str}"
-        f"*{escape_md(article['title'])}*\n\n"
-        f"{escape_md(preview)}…\n\n"
+        f"<b>{escape_html(article['title'])}</b>\n\n"
+        f"{escape_html(preview)}…\n\n"
         f"🔗 [Original]({article['url']})\n"
         f"{tags_str}"
     )
@@ -127,7 +127,7 @@ def send_to_telegram_with_buttons(article: dict, post: dict, post_id: str):
             json={
                 "chat_id":      TELEGRAM_CHAT_ID,
                 "text":         text,
-                "parse_mode":   "MarkdownV2",
+                "parse_mode":   "HTML",
                 "reply_markup": json.dumps(keyboard),
             },
             timeout=10,
