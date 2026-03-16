@@ -54,7 +54,16 @@ jobs:
             f = feedparser.parse(url)
             print(f'{name}: {len(f.entries)} entries')
           "
-
+      - name: Check env
+        run: |
+          python3 -c "
+          import os
+          key = os.environ.get('GROQ_API_KEY', '')
+          print('GROQ key present:', bool(key), '| length:', len(key))
+          "
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          
       - name: Run parser
         run: python parser.py
         timeout-minutes: 4    # ← parser не може висіти більше 4 хвилин
