@@ -223,7 +223,11 @@ def main():
 
     for i, article in enumerate(articles, 1):
         print(f"\n📰 ({i}/{len(articles)}) {article['title'][:60]}…")
-        print(f"   🤖 Generating post via Gemini...")
+        ai_on = bool(os.environ.get("GEMINI_API_KEY", ""))
+        if ai_on:
+            print(f"   🤖 Generating post via Gemini...")
+        else:
+            print(f"   ℹ️  AI disabled — sending original summary")
         post = generate_post(article)
 
         if post:
