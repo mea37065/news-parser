@@ -10,7 +10,7 @@ from ai_generator import generate_post
 from devto_publisher import publish_to_devto
 
 # ─────────────────────────────────────────
-#  CONFIG — читається з env variables
+#  CONFIG
 # ─────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "YOUR_CHAT_ID")
@@ -72,7 +72,7 @@ def parse_feeds() -> list[dict]:
         except Exception as e:
             print(f"   ❌ Error: {e}")
             continue
-        for entry in feed.entries[:2]:  # 2 з кожного джерела = ~18 max
+        for entry in feed.entries[:2]:  # 2 з кожного = ~18 max
             url = entry.get("link", "")
             if not url:
                 continue
@@ -137,8 +137,14 @@ def send_to_telegram_with_buttons(article: dict, post: dict, post_id: str):
     except Exception as e:
         print(f"   ❌ Send error: {e}")
 
+def send_telegram_text(text: str):
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"},
+        timeout=10,
+    )
+
 def poll_telegram_once():
-    """Перевіряє нові натискання кнопок і публікує якщо ✅"""
     pending = load_pending()
     if not pending:
         return
@@ -174,7 +180,6 @@ def poll_telegram_once():
                     save_pending(pending)
             else:
                 answer_text = "⚠️ Already processed"
-
         elif data.startswith("skip:"):
             post_id = data.split(":", 1)[1]
             if post_id in pending:
@@ -209,32 +214,46 @@ def main():
     articles = parse_feeds()
     if not articles:
         print("📭 No new articles.")
+        send_telegram_text("📭 No new articles today.")
         return
 
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-        json={
-            "chat_id":    TELEGRAM_CHAT_ID,
-            "text":       f"━━━━━━━━━━━━━━━━━━━━━━\n📰 *Digest {datetime.now().strftime('%d.%m.%Y')}*\nNew articles: {len(articles)}\n━━━━━━━━━━━━━━━━━━━━━━",
-            "parse_mode": "Markdown",
-        },
-        timeout=10,
-    )
+    pending    = load_pending()
+    sent_count = 0
+    ai_count   = 0
 
-    pending = load_pending()
     for i, article in enumerate(articles, 1):
         print(f"\n📰 ({i}/{len(articles)}) {article['title'][:60]}…")
         print(f"   🤖 Generating post via Gemini...")
         post = generate_post(article)
-        if not post:
-            print(f"   ⚠️ Skipping — generation failed")
-            continue
+
+        if post:
+            ai_count += 1
+        else:
+            # Fallback — якщо Gemini не відповів, відправляємо оригінальний текст
+            print(f"   ⚠️ Gemini failed — using original summary as fallback")
+            post = {
+                "title":      article["title"],
+                "body":       article["summary"] or "No summary available.",
+                "tags":       article["tags"],
+                "source_url": article["url"],
+            }
+
         pending[article["id"]] = post
         save_pending(pending)
         send_to_telegram_with_buttons(article, post, article["id"])
+        sent_count += 1
         print(f"   ✅ Sent to Telegram")
 
-    print(f"\n✅ Done! Press ✅ in Telegram to publish to Dev.to.")
+    # Заголовок дайджесту — після всіх статей, щоб він не висів самотньо
+    ai_note = f"AI-generated: {ai_count}/{sent_count}" if ai_count < sent_count else "AI-generated: all"
+    send_telegram_text(
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📰 *Digest {datetime.now().strftime('%d.%m.%Y')}*\n"
+        f"Articles: {sent_count} | {ai_note}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━"
+    )
+
+    print(f"\n✅ Done! {sent_count} articles sent ({ai_count} AI-generated).")
 
 if __name__ == "__main__":
     main()
