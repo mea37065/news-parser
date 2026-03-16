@@ -223,18 +223,14 @@ def main():
 
     for i, article in enumerate(articles, 1):
         print(f"\n📰 ({i}/{len(articles)}) {article['title'][:60]}…")
-        ai_on = bool(os.environ.get("GEMINI_API_KEY", ""))
-        if ai_on:
-            print(f"   🤖 Generating post via Gemini...")
-        else:
-            print(f"   ℹ️  AI disabled — sending original summary")
+        print(f"   🤖 Generating post via Gemini...")
         post = generate_post(article)
 
         if post:
             ai_count += 1
         else:
             # Fallback — якщо Gemini не відповів, відправляємо оригінальний текст
-            print(f"   ⚠️ Gemini failed — using original summary as fallback")
+            print(f"   ⚠️ Gemini unavailable — using original summary")
             post = {
                 "title":      article["title"],
                 "body":       article["summary"] or "No summary available.",
