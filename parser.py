@@ -72,7 +72,7 @@ def parse_feeds() -> list[dict]:
         except Exception as e:
             print(f"   ❌ Error: {e}")
             continue
-        for entry in feed.entries[:5]:
+        for entry in feed.entries[:2]:  # 2 з кожного джерела = ~18 max
             url = entry.get("link", "")
             if not url:
                 continue
