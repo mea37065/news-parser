@@ -8,7 +8,7 @@ echo ============================================
 echo.
 
 REM Перевірка Python
-python --version >nul 2>&1
+py --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not found!
     echo Please install Python from https://python.org
@@ -19,7 +19,7 @@ if errorlevel 1 (
 REM Створення venv якщо не існує
 if not exist "venv" (
     echo [1/3] Creating virtual environment...
-    python -m venv venv
+    py -m venv venv
     echo Done.
 )
 
@@ -29,7 +29,7 @@ call venv\Scripts\activate.bat
 
 REM Встановлення залежностей
 echo [3/3] Installing dependencies...
-pip install -r requirements.txt -q
+py -m pip install -r requirements.txt -q
 
 REM Перевірка .env файлу
 if not exist ".env" (
@@ -50,7 +50,7 @@ echo   Starting bot... Press Ctrl+C to stop
 echo ============================================
 echo.
 
-python bot.py
+py bot.py
 
 echo.
 echo Bot stopped.
