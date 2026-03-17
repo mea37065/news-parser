@@ -10,6 +10,7 @@ from html import unescape
 
 from ai_generator import generate_post
 from devto_publisher import publish_to_devto
+from linkedin_publisher import publish_to_linkedin
 
 # ─────────────────────────────────────────
 #  CONFIG
@@ -22,9 +23,9 @@ PENDING_FILE = Path(__file__).parent / "pending.json"
 
 def strip_html(text: str) -> str:
     """Видаляє HTML теги з тексту RSS summary."""
-    text = unescape(text)                        # &amp; → &  etc
-    text = re.sub(r'<[^>]+>', ' ', text)         # <strong> → пробіл
-    text = re.sub(r'\s+', ' ', text).strip()    # зайві пробіли
+    text = unescape(text)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 # ─────────────────────────────────────────
@@ -81,7 +82,7 @@ def parse_feeds() -> list[dict]:
         except Exception as e:
             print(f"   ❌ Error: {e}")
             continue
-        for entry in feed.entries[:2]:  # 2 з кожного = ~18 max
+        for entry in feed.entries[:2]:
             url = entry.get("link", "")
             if not url:
                 continue
@@ -115,19 +116,19 @@ def send_to_telegram_with_buttons(article: dict, post: dict, post_id: str):
     tags_str = " ".join(f"#{t}" for t in article["tags"])
     date_str = f"📅 {article['date']}\n" if article["date"] else ""
     preview  = post["body"][:300].strip()
-    url      = article["url"]
     text = (
         f"{article['source']}\n"
         f"{date_str}"
         f"<b>{escape_html(article['title'])}</b>\n\n"
         f"{escape_html(preview)}…\n\n"
-        f"🔗 [Original]({article['url']})\n"
+        f"🔗 <a href=\"{article['url']}\">Original</a>\n"
         f"{tags_str}"
     )
     keyboard = {
         "inline_keyboard": [[
-            {"text": "✅ Publish to Dev.to", "callback_data": f"publish:{post_id}"},
-            {"text": "❌ Skip",              "callback_data": f"skip:{post_id}"},
+            {"text": "✅ Dev.to",    "callback_data": f"publish:{post_id}"},
+            {"text": "🔵 LinkedIn", "callback_data": f"linkedin:{post_id}"},
+            {"text": "❌ Skip",     "callback_data": f"skip:{post_id}"},
         ]]
     }
     try:
@@ -189,12 +190,27 @@ def poll_telegram_once():
                     save_pending(pending)
             else:
                 answer_text = "⚠️ Already processed"
+
+        elif data.startswith("linkedin:"):
+            post_id = data.split(":", 1)[1]
+            post    = pending.get(post_id)
+            if post:
+                print(f"🔵 Publishing to LinkedIn: {post['title'][:60]}")
+                result      = publish_to_linkedin(post)
+                answer_text = "✅ Posted to LinkedIn!" if result else "❌ LinkedIn error"
+                if result:
+                    del pending[post_id]
+                    save_pending(pending)
+            else:
+                answer_text = "⚠️ Already processed"
+
         elif data.startswith("skip:"):
             post_id = data.split(":", 1)[1]
             if post_id in pending:
                 del pending[post_id]
                 save_pending(pending)
             answer_text = "⏭️ Skipped"
+
         else:
             continue
 
@@ -238,7 +254,6 @@ def main():
         if post:
             ai_count += 1
         else:
-            # Fallback — якщо Gemini не відповів, відправляємо оригінальний текст
             print(f"   ⚠️ AI unavailable — using original summary")
             post = {
                 "title":      article["title"],
@@ -253,7 +268,6 @@ def main():
         sent_count += 1
         print(f"   ✅ Sent to Telegram")
 
-    # Заголовок дайджесту — після всіх статей, щоб він не висів самотньо
     ai_note = f"AI-generated: {ai_count}/{sent_count}" if ai_count < sent_count else "AI-generated: all"
     send_telegram_text(
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
