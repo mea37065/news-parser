@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from devto_publisher import publish_to_devto
+from linkedin_publisher import publish_to_linkedin
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "")
@@ -84,7 +85,7 @@ def main():
             post    = pending.get(post_id)
 
             if post:
-                print(f"📤 Publishing: {post['title'][:60]}")
+                print(f"📤 Publishing to Dev.to: {post['title'][:60]}")
                 result = publish_to_devto(post, published=False)
 
                 if result:
@@ -96,6 +97,26 @@ def main():
                     processed += 1
                 else:
                     answer_callback(cb_id, "❌ Publish failed, try again")
+            else:
+                answer_callback(cb_id, "⚠️ Already processed")
+
+        elif data.startswith("linkedin:"):
+            post_id = data.split(":", 1)[1]
+            post    = pending.get(post_id)
+
+            if post:
+                print(f"🔵 Publishing to LinkedIn: {post['title'][:60]}")
+                result = publish_to_linkedin(post)
+
+                if result:
+                    answer_callback(cb_id, "✅ Posted to LinkedIn!")
+                    if message_id:
+                        edit_message_reply_markup(TELEGRAM_CHAT_ID, message_id)
+                    del pending[post_id]
+                    save_pending(pending)
+                    processed += 1
+                else:
+                    answer_callback(cb_id, "❌ LinkedIn failed, try again")
             else:
                 answer_callback(cb_id, "⚠️ Already processed")
 
