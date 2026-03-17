@@ -4,11 +4,14 @@ import time
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL   = "llama-3.3-70b-versatile"  # безкоштовна модель
+GROQ_MODEL   = "llama-3.3-70b-versatile"
 
-DELAY = 3   # Groq набагато швидший — 3 секунди достатньо
+DELAY       = 3
 MAX_RETRIES = 3
 
+# ─────────────────────────────────────────
+#  DEV.TO PROMPT
+# ─────────────────────────────────────────
 POST_PROMPT = """You are a technical blog writer specialising in cybersecurity and DevOps.
 
 Based on this news item, write a complete blog article:
@@ -28,25 +31,42 @@ Requirements:
 
 Return ONLY the article text, no explanations."""
 
-def generate_post(article: dict) -> dict | None:
+# ─────────────────────────────────────────
+#  LINKEDIN PROMPT
+# ─────────────────────────────────────────
+LINKEDIN_PROMPT = """You are writing a short LinkedIn post about a cybersecurity or tech news item.
+
+News:
+Title: {title}
+Summary: {summary}
+Source: {source}
+
+Rules:
+- Language: English
+- Length: 80-120 words MAX. Be concise.
+- Start with the single most important fact from this news — no intro fluff
+- Write like a human, not a marketing bot
+- NO clichés: do not use words like "game-changer", "exciting", "leverage", "utilize", "dive into", "landscape", "robust", "seamless", "cutting-edge", "revolutionary", "groundbreaking", "in today's world", "it's worth noting"
+- NO hashtags in the text body
+- End with exactly 2-3 hashtags on the last line, format: #tag1 #tag2 #tag3
+- Do NOT use emoji except one optional at the very start
+- Be direct, factual, conversational
+
+Return ONLY the post text, nothing else."""
+
+
+def _call_groq(prompt: str) -> str | None:
     if not GROQ_API_KEY:
         return None
-
-    prompt = POST_PROMPT.format(
-        title=article["title"],
-        summary=article["summary"],
-        source=article["source"],
-        url=article["url"],
-    )
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type":  "application/json",
     }
     payload = {
-        "model":    GROQ_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1024,
+        "model":       GROQ_MODEL,
+        "messages":    [{"role": "user", "content": prompt}],
+        "max_tokens":  1024,
         "temperature": 0.7,
     }
 
@@ -62,20 +82,7 @@ def generate_post(article: dict) -> dict | None:
                 continue
 
             resp.raise_for_status()
-            text = resp.json()["choices"][0]["message"]["content"].strip()
-
-            tags, body = [], text
-            if "Tags:" in text:
-                parts = text.rsplit("Tags:", 1)
-                body  = parts[0].strip()
-                tags  = [t.strip() for t in parts[1].split(",") if t.strip()]
-
-            return {
-                "title":      article["title"],
-                "body":       body,
-                "tags":       tags,
-                "source_url": article["url"],
-            }
+            return resp.json()["choices"][0]["message"]["content"].strip()
 
         except Exception as e:
             print(f"   ❌ Groq error (attempt {attempt}/{MAX_RETRIES}): {e}")
@@ -83,3 +90,39 @@ def generate_post(article: dict) -> dict | None:
                 time.sleep(10)
 
     return None
+
+
+def generate_post(article: dict) -> dict | None:
+    """Генерує пост для Dev.to."""
+    prompt = POST_PROMPT.format(
+        title=article["title"],
+        summary=article["summary"],
+        source=article["source"],
+        url=article["url"],
+    )
+    text = _call_groq(prompt)
+    if not text:
+        return None
+
+    tags, body = [], text
+    if "Tags:" in text:
+        parts = text.rsplit("Tags:", 1)
+        body  = parts[0].strip()
+        tags  = [t.strip() for t in parts[1].split(",") if t.strip()]
+
+    return {
+        "title":      article["title"],
+        "body":       body,
+        "tags":       tags,
+        "source_url": article["url"],
+    }
+
+
+def generate_linkedin_post(article: dict) -> str | None:
+    """Генерує короткий людський пост для LinkedIn."""
+    prompt = LINKEDIN_PROMPT.format(
+        title=article["title"],
+        summary=article["summary"],
+        source=article["source"],
+    )
+    return _call_groq(prompt)

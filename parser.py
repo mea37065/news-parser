@@ -8,21 +8,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from html import unescape
 
-from ai_generator import generate_post
+from ai_generator import generate_post, generate_linkedin_post
 from devto_publisher import publish_to_devto
 from linkedin_publisher import publish_to_linkedin
 
 # ─────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "YOUR_CHAT_ID")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID",   "")
 
 SEEN_FILE    = Path(__file__).parent / "seen.json"
 PENDING_FILE = Path(__file__).parent / "pending.json"
 
 def strip_html(text: str) -> str:
-    """Видаляє HTML теги з тексту RSS summary."""
     text = unescape(text)
     text = re.sub(r'<[^>]+>', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -154,93 +153,17 @@ def send_telegram_text(text: str):
         timeout=10,
     )
 
-def poll_telegram_once():
-    pending = load_pending()
-    if not pending:
-        return
-    try:
-        resp = requests.get(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
-            params={"timeout": 5, "allowed_updates": ["callback_query"]},
-            timeout=10,
-        )
-        updates = resp.json().get("result", [])
-    except Exception as e:
-        print(f"❌ getUpdates error: {e}")
-        return
-
-    last_update_id = 0
-    for update in updates:
-        last_update_id = update["update_id"]
-        cb = update.get("callback_query")
-        if not cb:
-            continue
-        data  = cb.get("data", "")
-        cb_id = cb["id"]
-
-        if data.startswith("publish:"):
-            post_id = data.split(":", 1)[1]
-            post    = pending.get(post_id)
-            if post:
-                print(f"📤 Publishing to Dev.to: {post['title'][:60]}")
-                result      = publish_to_devto(post, published=False)
-                answer_text = "✅ Saved as draft on Dev.to!" if result else "❌ Publish error"
-                if result:
-                    del pending[post_id]
-                    save_pending(pending)
-            else:
-                answer_text = "⚠️ Already processed"
-
-        elif data.startswith("linkedin:"):
-            post_id = data.split(":", 1)[1]
-            post    = pending.get(post_id)
-            if post:
-                print(f"🔵 Publishing to LinkedIn: {post['title'][:60]}")
-                result      = publish_to_linkedin(post)
-                answer_text = "✅ Posted to LinkedIn!" if result else "❌ LinkedIn error"
-                if result:
-                    del pending[post_id]
-                    save_pending(pending)
-            else:
-                answer_text = "⚠️ Already processed"
-
-        elif data.startswith("skip:"):
-            post_id = data.split(":", 1)[1]
-            if post_id in pending:
-                del pending[post_id]
-                save_pending(pending)
-            answer_text = "⏭️ Skipped"
-
-        else:
-            continue
-
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
-            json={"callback_query_id": cb_id, "text": answer_text},
-            timeout=5,
-        )
-
-    if last_update_id:
-        requests.get(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
-            params={"offset": last_update_id + 1},
-            timeout=5,
-        )
-
 # ─────────────────────────────────────────
-#  MAIN
+#  MAIN CYCLE (викликається з bot.py)
 # ─────────────────────────────────────────
-def main():
-    print(f"\n🚀 News Parser started — {datetime.now().strftime('%d.%m.%Y %H:%M')}\n")
-
-    print("🔄 Checking pending approvals...\n")
-    poll_telegram_once()
+def run_parse_cycle():
+    print(f"\n🚀 Parse cycle — {datetime.now().strftime('%d.%m.%Y %H:%M')}\n")
 
     articles = parse_feeds()
     if not articles:
         print("📭 No new articles.")
         send_telegram_text("📭 No new articles today.")
-        return
+        return 0
 
     pending    = load_pending()
     sent_count = 0
@@ -248,7 +171,7 @@ def main():
 
     for i, article in enumerate(articles, 1):
         print(f"\n📰 ({i}/{len(articles)}) {article['title'][:60]}…")
-        print(f"   🤖 Generating post via Groq AI...")
+        print(f"   🤖 Generating Dev.to post...")
         post = generate_post(article)
 
         if post:
@@ -261,6 +184,13 @@ def main():
                 "tags":       article["tags"],
                 "source_url": article["url"],
             }
+
+        # Окремий короткий пост для LinkedIn
+        print(f"   🔵 Generating LinkedIn post...")
+        linkedin_body = generate_linkedin_post(article)
+        if not linkedin_body:
+            linkedin_body = f"{article['title']}\n\n{article['summary'][:200]}\n\n{article['url']}"
+        post["linkedin_body"] = linkedin_body
 
         pending[article["id"]] = post
         save_pending(pending)
@@ -277,6 +207,11 @@ def main():
     )
 
     print(f"\n✅ Done! {sent_count} articles sent ({ai_count} AI-generated).")
+    return sent_count
+
+
+def main():
+    run_parse_cycle()
 
 if __name__ == "__main__":
     main()
