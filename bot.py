@@ -15,12 +15,8 @@ import requests
 from pathlib import Path
 from datetime import datetime
 
-# Завантажуємо .env якщо є
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+from credentials import load_credentials
+load_credentials()
 
 from devto_publisher import publish_to_devto, check_devto_connection
 from linkedin_publisher import publish_to_linkedin, check_linkedin_connection
