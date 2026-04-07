@@ -1,47 +1,62 @@
 # News Parser
 
-`news-parser` collects fresh tech and cybersecurity items from a curated RSS list, rewrites them into short factual recaps, sends each item to Telegram for review, and lets you publish selected posts to LinkedIn.
+[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Telegram](https://img.shields.io/badge/Telegram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://telegram.org/)
+[![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/)
+[![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
-## What It Does
+News Parser is a small automation tool that collects fresh tech and cybersecurity stories from RSS feeds, rewrites them into concise factual recaps, sends them to Telegram for review, and lets you publish approved items to LinkedIn.
 
-- Runs one parsing cycle per day at `08:00` in the `Europe/Bratislava` timezone (`CET` in winter, `CEST` in summer)
-- Pulls items from RSS feeds focused on security, cloud, infrastructure, and engineering news
+## Overview
+
+- Runs one parsing cycle per day at `08:00` in the `Europe/Bratislava` timezone
+- Pulls new items from curated RSS feeds
 - Generates:
-  - a concise news recap
+  - a short recap of each story
   - a LinkedIn-ready version of the same story
-  - a daily summary with metrics after the full batch is processed
-- Sends each item to Telegram with review buttons
-- Publishes approved items to LinkedIn
+  - a daily summary with simple metrics
+- Sends review previews to Telegram
+- Publishes approved posts to LinkedIn
 
-## Project Structure
+## How It Works
+
+1. `parser.py` loads RSS feeds and detects new articles.
+2. `ai_generator.py` rewrites each story into a factual recap and LinkedIn post.
+3. `bot.py` sends previews to Telegram and handles callback actions.
+4. `linkedin_publisher.py` publishes approved items to LinkedIn.
+5. After the batch is finished, the bot sends a daily summary.
+
+## Project Files
 
 - `bot.py` - scheduler and Telegram callback loop
-- `parser.py` - feed parsing, recap generation, Telegram delivery, daily summary
-- `ai_generator.py` - prompts and Groq client wrapper
-- `linkedin_publisher.py` - LinkedIn API publishing
-- `credentials.py` - Windows Credential Manager loading
-- `poll.py` - optional one-shot callback polling entry point
+- `parser.py` - feed parsing, recap generation, Telegram delivery, and summary creation
+- `ai_generator.py` - Groq client wrapper and prompts
+- `linkedin_publisher.py` - LinkedIn publishing logic
+- `credentials.py` - Windows Credential Manager integration
+- `poll.py` - one-shot callback polling entry point
+- `start.bat` - Windows bootstrap script
 
 ## Requirements
 
 - Python `3.11+`
 - Windows PowerShell
-- A Telegram bot token and chat ID
-- A Groq API key
-- A LinkedIn access token with permission to create posts
+- Telegram bot token and chat ID
+- Groq API key
+- LinkedIn access token with permission to create posts
 
 ## Configuration
 
 The project reads secrets from Windows Credential Manager.
 
-Create credentials with targets in the format `MyApp/<KEY>` for:
+Create credentials using the `MyApp/<KEY>` target format for:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `GROQ_API_KEY`
 - `LINKEDIN_ACCESS_TOKEN`
 
-You can keep a local `.env` for reference, but secrets should not be committed.
+`.env.example` is included only as a reference template. Do not commit real secrets.
 
 ## Install
 
@@ -57,10 +72,18 @@ py -m pip install -r requirements.txt
 py bot.py
 ```
 
-The included `start.bat` bootstraps the environment and starts the bot on Windows.
+If you prefer, you can start it through:
 
-## Notes For Public Use
+```powershell
+.\start.bat
+```
 
-- Runtime state files are ignored and are not meant to be versioned
-- The repository does not include secrets
-- If you want to open-source this project formally, add a license that matches how you want others to use it
+## CI
+
+GitHub Actions runs a lightweight validation workflow that installs dependencies and checks Python syntax for the main project files.
+
+## Public Repository Notes
+
+- Runtime state files such as `pending.json`, `seen.json`, `tg_offset.txt`, and `schedule_state.json` are ignored
+- Local secrets are not tracked
+- The repository currently does not include a license file
