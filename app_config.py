@@ -59,7 +59,11 @@ def load_runtime_environment() -> None:
     load_credentials(required=False)
 
 
-def load_settings(*, validate_secrets: bool = True) -> Settings:
+def load_settings(
+    *,
+    validate_secrets: bool = True,
+    require_linkedin: bool = True,
+) -> Settings:
     load_runtime_environment()
 
     settings = Settings(
@@ -91,8 +95,9 @@ def load_settings(*, validate_secrets: bool = True) -> Settings:
         required = {
             "TELEGRAM_BOT_TOKEN": settings.telegram_bot_token,
             "TELEGRAM_CHAT_ID": settings.telegram_chat_id,
-            "LINKEDIN_ACCESS_TOKEN": settings.linkedin_access_token,
         }
+        if require_linkedin:
+            required["LINKEDIN_ACCESS_TOKEN"] = settings.linkedin_access_token
         missing = [name for name, value in required.items() if not value]
         if missing:
             joined = ", ".join(missing)
