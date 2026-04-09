@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from app_config import Settings, load_settings
 from linkedin_publisher import check_linkedin_connection, publish_to_linkedin
 from logging_config import configure_logging
-from parser import escape_html, run_parse_cycle
+from parser import escape_html, run_parse_cycle, send_to_telegram_with_buttons
 from storage import (
     ARTICLE_STATUS_QUEUED,
     ARTICLE_STATUS_REVIEWING,
@@ -134,7 +134,23 @@ def handle_callbacks(
             post_id = data.split(":", 1)[1]
             post = storage.get_article(post_id)
             if post and post["status"] == ARTICLE_STATUS_REVIEWING:
-                storage.restore_queued(post_id)
+                new_message_id = send_to_telegram_with_buttons(
+                    telegram,
+                    post,
+                    post_id=post_id,
+                    preview_text=str(
+                        post.get("recap") or post.get("linkedin_body") or ""
+                    ),
+                )
+                if new_message_id is not None:
+                    storage.queue_article(
+                        post_id,
+                        recap=str(post.get("recap") or ""),
+                        linkedin_body=str(post.get("linkedin_body") or ""),
+                        telegram_message_id=new_message_id,
+                    )
+                else:
+                    storage.restore_queued(post_id)
             if message_id:
                 telegram.remove_buttons(chat_id=chat_id, message_id=message_id)
             telegram.answer_callback(callback_id, "Cancelled.")

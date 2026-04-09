@@ -147,3 +147,51 @@ def test_handle_callbacks_publishes_to_linkedin(tmp_path, monkeypatch) -> None:
     assert article is not None
     assert article["status"] == ARTICLE_STATUS_PUBLISHED
     assert article["linkedin_post_id"] == "share-1"
+
+
+def test_handle_callbacks_cancel_requeues_article(tmp_path) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    storage.add_discovered_article(
+        {
+            "id": "article-1",
+            "fingerprint": "fingerprint-1",
+            "source": "Example Feed",
+            "tags": ["cloud"],
+            "title": "Cloud update",
+            "url": "https://example.com/cloud",
+            "summary": "Summary",
+            "article_text": "",
+            "date": "09.04.2026",
+        }
+    )
+    storage.queue_article(
+        "article-1",
+        recap="Recap",
+        linkedin_body="LinkedIn preview",
+        telegram_message_id=10,
+    )
+    storage.set_reviewing("article-1")
+    telegram = FakeTelegramClient(
+        [
+            {
+                "update_id": 1,
+                "callback_query": {
+                    "id": "cb-1",
+                    "data": "linkedin_cancel:article-1",
+                    "message": {
+                        "message_id": 321,
+                        "chat": {"id": "chat-id"},
+                    },
+                },
+            }
+        ]
+    )
+
+    handle_callbacks(settings, storage, telegram)
+
+    article = storage.get_article("article-1")
+    assert article is not None
+    assert article["status"] == "queued"
+    assert article["telegram_message_id"] == 999
+    assert telegram.preview_messages

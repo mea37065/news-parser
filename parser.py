@@ -344,7 +344,7 @@ def run_parse_cycle(
 
 def main() -> None:
     configure_logging()
-    settings = load_settings()
+    settings = load_settings(require_linkedin=False)
     storage = Storage(settings.storage_path)
     run_parse_cycle(settings, storage)
 
