@@ -8,17 +8,6 @@
 
 News Parser is a small automation tool that collects fresh tech and cybersecurity stories from RSS feeds, rewrites them into concise factual recaps, sends them to Telegram for review, and lets you publish approved items to LinkedIn.
 
-## What Changed
-
-- Runtime state now lives in SQLite instead of multiple JSON files
-- Articles move through explicit statuses: `discovered`, `delivery_failed`, `queued`, `reviewing`, `published`, `skipped`
-- Feed definitions are stored in `feeds.json`
-- App settings are centralized in `app_config.py`
-- Logging uses the standard `logging` module instead of raw `print`
-- Story generation now uses one AI request for recap + LinkedIn copy
-- The parser optionally fetches article page text to improve prompt quality
-- CI now runs linting and tests in addition to syntax validation
-
 ## Overview
 
 - Runs one parsing cycle per day at `08:00` in the `Europe/Bratislava` timezone by default
@@ -45,6 +34,15 @@ News Parser is a small automation tool that collects fresh tech and cybersecurit
 - `feeds.json` - editable feed catalog
 - `poll.py` - one-shot callback polling entry point
 
+## Architecture Notes
+
+- Runtime state lives in SQLite instead of multiple JSON files
+- Articles move through explicit statuses: `discovered`, `delivery_failed`, `queued`, `reviewing`, `published`, `skipped`
+- Feed definitions are stored in `feeds.json`
+- Story generation uses one AI request for recap + LinkedIn copy
+- The parser can fetch article page text to improve prompt quality
+- CI runs linting, tests, and syntax validation
+
 ## Requirements
 
 - Python `3.11+`
@@ -59,6 +57,8 @@ The app loads configuration in this order:
 1. existing environment variables
 2. `.env`
 3. Windows Credential Manager targets in the `MyApp/<KEY>` format
+
+The project is currently Windows-first because it supports Windows Credential Manager out of the box. If those credentials are not available, environment variables or `.env` still work.
 
 Required secrets:
 
@@ -129,4 +129,4 @@ GitHub Actions now performs:
 
 - Runtime state is stored in `news_parser.db` by default
 - Local secrets and temporary test directories are ignored by git
-- The repository still does not include a license file
+- The project is licensed under Apache License 2.0
