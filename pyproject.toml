@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider --basetemp=pytest_run_tmp"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+exclude = ["venv", "__pycache__", ".pytest_tmp", "pytest_run_tmp"]
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

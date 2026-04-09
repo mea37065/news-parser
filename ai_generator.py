@@ -1,93 +1,105 @@
 from __future__ import annotations
 
-import os
+import json
+import logging
+import re
 import time
 from typing import Any
 
 import requests
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+from app_config import Settings
 
-REQUEST_DELAY_SECONDS = 3
-REQUEST_TIMEOUT_SECONDS = 30
-MAX_RETRIES = 3
+logger = logging.getLogger(__name__)
 
-ARTICLE_RECAP_SYSTEM_PROMPT = """
-You rewrite news items into concise, factual recaps.
+STORY_ASSETS_SYSTEM_PROMPT = """
+You rewrite news items into concise, factual text assets.
 
-Your job is to preserve the original meaning of the news, not to transform it into an opinion piece, tutorial, marketing post, or long-form article.
-Use only the facts provided in the input. If a detail is missing, leave it out.
-Do not speculate, exaggerate, or add background that was not supplied.
-""".strip()
-
-LINKEDIN_SYSTEM_PROMPT = """
-You write short LinkedIn posts that recap a news item in a clear, human, factual way.
-
-Keep the meaning of the original news intact.
-Do not turn the post into commentary, advice, or marketing copy.
-Do not use emojis.
+Preserve the original meaning of the news. Use only the facts provided in the input.
+Do not speculate, exaggerate, add unsupported context,
+or turn the text into advice or marketing.
+Return valid JSON only.
 """.strip()
 
 DAILY_SUMMARY_SYSTEM_PROMPT = """
 You write a concise daily digest for a set of tech and cybersecurity news items.
 
-Summarize the main themes that appeared across the provided stories and stay grounded in the supplied facts and metrics.
+Summarize the main themes that appeared across the provided stories
+and stay grounded in the supplied facts and metrics.
 Do not invent trends, causes, or implications that are not supported by the input.
 Do not use emojis or hype.
 """.strip()
 
 
 def _article_context(article: dict[str, Any]) -> str:
+    article_text = article.get("article_text", "").strip()
     return (
         f"Title: {article['title']}\n"
         f"Summary: {article['summary']}\n"
+        f"Article text: {article_text or 'Not available'}\n"
         f"Source: {article['source']}\n"
         f"Date: {article.get('date', '')}\n"
+        f"Tags: {', '.join(article.get('tags', []))}\n"
         f"Link: {article['url']}"
     )
 
 
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+
+
 def _call_groq(
+    settings: Settings,
     *,
     system_prompt: str,
     user_prompt: str,
     max_tokens: int,
     temperature: float,
 ) -> str | None:
-    if not GROQ_API_KEY:
+    if not settings.groq_api_key:
         return None
 
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {settings.groq_api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": GROQ_MODEL,
+        "model": settings.groq_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         "max_tokens": max_tokens,
         "temperature": temperature,
+        "response_format": {"type": "json_object"},
     }
 
-    for attempt in range(1, MAX_RETRIES + 1):
-        time.sleep(REQUEST_DELAY_SECONDS)
+    for attempt in range(1, settings.groq_max_retries + 1):
+        time.sleep(settings.groq_request_delay_seconds)
         try:
             response = requests.post(
-                GROQ_URL,
+                "https://api.groq.com/openai/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                timeout=settings.groq_request_timeout_seconds,
             )
 
             if response.status_code == 429:
                 wait_seconds = 15 * attempt
-                print(
-                    f"   Rate limit from Groq, waiting {wait_seconds}s "
-                    f"(attempt {attempt}/{MAX_RETRIES})..."
+                logger.warning(
+                    "Rate limit from Groq, waiting %ss (attempt %s/%s)",
+                    wait_seconds,
+                    attempt,
+                    settings.groq_max_retries,
                 )
                 time.sleep(wait_seconds)
                 continue
@@ -95,66 +107,80 @@ def _call_groq(
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"].strip()
-
         except Exception as error:
-            print(f"   Groq error (attempt {attempt}/{MAX_RETRIES}): {error}")
-            if attempt < MAX_RETRIES:
+            logger.warning(
+                "Groq error on attempt %s/%s: %s",
+                attempt,
+                settings.groq_max_retries,
+                error,
+            )
+            if attempt < settings.groq_max_retries:
                 time.sleep(10)
 
     return None
 
 
-def generate_article_recap(article: dict[str, Any]) -> str | None:
+def generate_story_assets(
+    settings: Settings,
+    article: dict[str, Any],
+) -> dict[str, str] | None:
     prompt = (
-        "Rewrite this news item as a concise recap.\n\n"
-        "Rules:\n"
+        "Create two text assets for this news item and return JSON with keys "
+        '"recap" and "linkedin_post".\n\n'
+        "Rules for recap:\n"
         "- Language: English\n"
         "- Length: 90-140 words\n"
         "- Keep the original facts, scope, and tone intact\n"
         "- Focus on what happened and the key takeaway from the supplied text\n"
-        "- Do not add opinions, speculation, extra background, recommendations, or clickbait\n"
+        "- Do not add opinions, speculation, extra background, "
+        "recommendations, or clickbait\n"
         "- Do not use bullets, hashtags, markdown, or emojis\n"
-        "- Use 1-2 short paragraphs\n"
-        "- If the input is sparse, stay close to it and say less rather than inventing details\n\n"
-        f"{_article_context(article)}\n\n"
-        "Return only the recap text."
-    )
-    return _call_groq(
-        system_prompt=ARTICLE_RECAP_SYSTEM_PROMPT,
-        user_prompt=prompt,
-        max_tokens=260,
-        temperature=0.2,
-    )
-
-
-def generate_linkedin_post(article: dict[str, Any]) -> str | None:
-    prompt = (
-        "Write a short LinkedIn post that recaps this news item.\n\n"
-        "Rules:\n"
+        "- Use 1-2 short paragraphs\n\n"
+        "Rules for linkedin_post:\n"
         "- Language: English\n"
         "- Length: 80-120 words total before hashtags\n"
-        "- Start with the key fact from the story, not with a greeting or scene-setting line\n"
+        "- Start with the key fact from the story\n"
         "- Keep it factual and conversational\n"
-        "- Rephrase the news faithfully instead of expanding it into broader commentary\n"
-        "- No emojis anywhere in the post\n"
-        "- No bullets and no markdown\n"
+        "- No emojis, bullets, or markdown\n"
         "- No hashtags in the body text\n"
-        "- End with exactly 2-3 relevant hashtags on the last line only\n\n"
-        f"{_article_context(article)}\n\n"
-        "Return only the LinkedIn post."
+        "- End with exactly 2-3 relevant hashtags on the last line only\n"
+        "- Do not repeat the source URL in the post\n\n"
+        f"{_article_context(article)}"
     )
-    return _call_groq(
-        system_prompt=LINKEDIN_SYSTEM_PROMPT,
+    response_text = _call_groq(
+        settings,
+        system_prompt=STORY_ASSETS_SYSTEM_PROMPT,
         user_prompt=prompt,
-        max_tokens=220,
-        temperature=0.3,
+        max_tokens=420,
+        temperature=0.25,
     )
+    if not response_text:
+        return None
+
+    payload = _extract_json_object(response_text)
+    if not payload:
+        logger.warning("Groq returned invalid JSON for article: %s", article["title"])
+        return None
+
+    recap = str(payload.get("recap", "")).strip()
+    linkedin_post = str(payload.get("linkedin_post", "")).strip()
+    if not recap or not linkedin_post:
+        return None
+
+    return {
+        "recap": recap,
+        "linkedin_post": linkedin_post,
+    }
 
 
 def generate_daily_summary(
+    settings: Settings,
     articles: list[dict[str, Any]],
     metrics: dict[str, Any],
 ) -> str | None:
+    if not settings.groq_api_key:
+        return None
+
     article_lines = []
     for index, article in enumerate(articles, start=1):
         article_lines.append(
@@ -171,15 +197,26 @@ def generate_daily_summary(
         "- Keep the text neutral and information-dense\n"
         "- Do not mention that an AI wrote it\n"
         "- Do not use bullets, markdown, emojis, or hashtags\n"
-        "- Use the supplied metrics naturally when relevant, but do not simply list them all\n\n"
+        "- Use the supplied metrics naturally when relevant, "
+        "but do not simply list them all\n\n"
         f"Metrics: {metrics}\n\n"
         "Articles:\n"
         f"{chr(10).join(article_lines)}\n\n"
-        "Return only the summary text."
+        "Return JSON with a single key named summary."
     )
-    return _call_groq(
+    response_text = _call_groq(
+        settings,
         system_prompt=DAILY_SUMMARY_SYSTEM_PROMPT,
         user_prompt=prompt,
         max_tokens=320,
         temperature=0.3,
     )
+    if not response_text:
+        return None
+
+    payload = _extract_json_object(response_text)
+    if not payload:
+        return None
+
+    summary = str(payload.get("summary", "")).strip()
+    return summary or None

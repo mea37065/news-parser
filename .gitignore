@@ -1,13 +1,29 @@
 .env
 __pycache__/
 venv/
+.venv/
 *.pyc
+.coverage
+.pytest_tmp/
+pytest_run_tmp/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.idea/
+.vscode/
 
 # Runtime state
+news_parser.db
+*.db
 pending.json
 seen.json
-tg_offset.txt
 schedule_state.json
+tg_offset.txt
+pytest-cache-files-*/
+
+# Local tooling
+.agents/
+skills-lock.json
 
 # OS/editor
 .DS_Store
