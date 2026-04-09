@@ -50,6 +50,49 @@ News Parser is a small automation tool that collects fresh tech and cybersecurit
 - Groq API key
 - LinkedIn access token with permission to create posts
 
+## Quick Start From Zero
+
+Clone the repository:
+
+```powershell
+git clone https://github.com/mea37065/news-parser.git
+cd news-parser
+```
+
+Create a virtual environment and install dependencies:
+
+```powershell
+py -m venv venv
+.\venv\Scripts\activate
+py -m pip install -r requirements.txt
+py -m pip install -r requirements-dev.txt
+```
+
+Create a local config file from the example:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Open `.env` and fill in at least:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `LINKEDIN_ACCESS_TOKEN`
+- `GROQ_API_KEY` if you want AI-generated recap and summary content
+
+Run the app:
+
+```powershell
+py bot.py
+```
+
+If you want the simple Windows bootstrap flow instead:
+
+```powershell
+.\start.bat
+```
+
 ## Configuration
 
 The app loads configuration in this order:
