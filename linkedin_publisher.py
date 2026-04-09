@@ -1,64 +1,95 @@
 from __future__ import annotations
 
-import os
+import logging
+from typing import Any
 
 import requests
 
-LINKEDIN_ACCESS_TOKEN = os.environ.get("LINKEDIN_ACCESS_TOKEN", "")
+from app_config import Settings, load_settings
+from logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
+
 LINKEDIN_API = "https://api.linkedin.com/v2"
+LINKEDIN_MAX_TEXT_LENGTH = 3000
 
 
-def get_linkedin_urn() -> str | None:
-    response = requests.get(
-        f"{LINKEDIN_API}/userinfo",
-        headers={"Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}"},
-        timeout=10,
-    )
-    if response.ok:
-        subject = response.json().get("sub")
-        return f"urn:li:person:{subject}" if subject and not subject.startswith("urn") else subject
-
-    print(f"LinkedIn auth error: {response.status_code} - {response.text}")
-    return None
+def _auth_headers(settings: Settings) -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.linkedin_access_token}"}
 
 
-def check_linkedin_connection() -> bool:
-    response = requests.get(
-        f"{LINKEDIN_API}/userinfo",
-        headers={"Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}"},
-        timeout=10,
-    )
-    if response.ok:
-        data = response.json()
-        print(f"Connected to LinkedIn as: {data.get('name')} ({data.get('email')})")
-        return True
-
-    print(f"LinkedIn connection error: {response.status_code} - {response.text}")
-    return False
-
-
-def publish_to_linkedin(post: dict) -> dict | None:
-    urn = get_linkedin_urn()
-    if not urn:
+def get_linkedin_urn(settings: Settings) -> str | None:
+    try:
+        response = requests.get(
+            f"{LINKEDIN_API}/userinfo",
+            headers=_auth_headers(settings),
+            timeout=10,
+        )
+        response.raise_for_status()
+    except Exception as error:
+        logger.error("LinkedIn auth error: %s", error)
         return None
 
-    tags_str = " ".join(f"#{tag.replace(' ', '')}" for tag in post.get("tags", []))
-    body = post["body"][:2800].strip()
-    source_url = post.get("source_url", "").strip()
+    subject = response.json().get("sub")
+    if not subject:
+        return None
+    return f"urn:li:person:{subject}" if not subject.startswith("urn") else subject
 
-    text = (
-        f"{post['title']}\n\n"
-        f"{body}\n\n"
-        f"{source_url}\n\n"
-        f"{tags_str}"
-    ).strip()
+
+def check_linkedin_connection(settings: Settings) -> bool:
+    try:
+        response = requests.get(
+            f"{LINKEDIN_API}/userinfo",
+            headers=_auth_headers(settings),
+            timeout=10,
+        )
+        response.raise_for_status()
+    except Exception as error:
+        logger.error("LinkedIn connection error: %s", error)
+        return False
+
+    data = response.json()
+    logger.info(
+        "Connected to LinkedIn as: %s (%s)",
+        data.get("name"),
+        data.get("email"),
+    )
+    return True
+
+
+def build_linkedin_text(post: dict[str, Any]) -> str:
+    parts = [
+        post["title"].strip(),
+        post["body"].strip(),
+        post.get("source_url", "").strip(),
+        " ".join(f"#{tag.replace(' ', '')}" for tag in post.get("tags", [])),
+    ]
+    text = "\n\n".join(part for part in parts if part).strip()
+    if len(text) <= LINKEDIN_MAX_TEXT_LENGTH:
+        return text
+
+    overflow = len(text) - LINKEDIN_MAX_TEXT_LENGTH
+    body = post["body"].strip()
+    safe_body = body[:-overflow].rstrip() if overflow < len(body) else ""
+    parts[1] = safe_body
+    text = "\n\n".join(part for part in parts if part).strip()
+    return text[:LINKEDIN_MAX_TEXT_LENGTH]
+
+
+def publish_to_linkedin(
+    settings: Settings,
+    post: dict[str, Any],
+) -> dict[str, Any] | None:
+    urn = get_linkedin_urn(settings)
+    if not urn:
+        return None
 
     payload = {
         "author": urn,
         "lifecycleState": "PUBLISHED",
         "specificContent": {
             "com.linkedin.ugc.ShareContent": {
-                "shareCommentary": {"text": text},
+                "shareCommentary": {"text": build_linkedin_text(post)},
                 "shareMediaCategory": "NONE",
             }
         },
@@ -71,7 +102,7 @@ def publish_to_linkedin(post: dict) -> dict | None:
         response = requests.post(
             f"{LINKEDIN_API}/ugcPosts",
             headers={
-                "Authorization": f"Bearer {LINKEDIN_ACCESS_TOKEN}",
+                **_auth_headers(settings),
                 "Content-Type": "application/json",
                 "X-Restli-Protocol-Version": "2.0.0",
             },
@@ -80,25 +111,25 @@ def publish_to_linkedin(post: dict) -> dict | None:
         )
         response.raise_for_status()
         data = response.json()
-        print("Posted to LinkedIn.")
-        print(f"Post ID: {data.get('id', 'n/a')}")
+        logger.info("Posted to LinkedIn. Post ID: %s", data.get("id", "n/a"))
         return data
-
     except Exception as error:
-        print(f"LinkedIn publish error: {error}")
+        logger.error("LinkedIn publish error: %s", error)
         if hasattr(error, "response") and error.response is not None:
-            print(f"Details: {error.response.text}")
+            logger.error("LinkedIn details: %s", error.response.text)
         return None
 
 
 if __name__ == "__main__":
-    print("Checking LinkedIn connection...\n")
-    if check_linkedin_connection():
-        test_post = {
-            "title": "Test Post from News AI Parser",
-            "body": "This is a test post generated automatically.",
-            "tags": ["cybersecurity", "devops", "automation"],
-            "source_url": "https://example.com",
-        }
-        print("\nPublishing test post...\n")
-        publish_to_linkedin(test_post)
+    configure_logging()
+    current_settings = load_settings()
+    if check_linkedin_connection(current_settings):
+        publish_to_linkedin(
+            current_settings,
+            {
+                "title": "Test Post from News AI Parser",
+                "body": "This is a test post generated automatically.",
+                "tags": ["cybersecurity", "devops", "automation"],
+                "source_url": "https://example.com",
+            },
+        )

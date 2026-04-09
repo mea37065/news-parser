@@ -1,103 +1,39 @@
 from __future__ import annotations
 
-import json
-import os
-import threading
+import logging
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
-from zoneinfo import ZoneInfo
 
-import requests
-
-from credentials import load_credentials
-
-load_credentials()
-
+from app_config import Settings, load_settings
 from linkedin_publisher import check_linkedin_connection, publish_to_linkedin
-from parser import escape_html, load_pending, run_parse_cycle, save_pending
+from logging_config import configure_logging
+from parser import escape_html, run_parse_cycle
+from storage import (
+    ARTICLE_STATUS_QUEUED,
+    ARTICLE_STATUS_REVIEWING,
+    Storage,
+)
+from telegram_client import TelegramClient
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+logger = logging.getLogger(__name__)
 
-POLL_INTERVAL_SECONDS = 3
-SCHEDULE_TIMEZONE = ZoneInfo("Europe/Bratislava")
-SCHEDULE_LABEL = "Europe/Bratislava (CET/CEST)"
-DAILY_RUN_HOUR = 8
-DAILY_RUN_MINUTE = 0
-
-OFFSET_FILE = Path(__file__).parent / "tg_offset.txt"
-SCHEDULE_STATE_FILE = Path(__file__).parent / "schedule_state.json"
-
-
-def load_offset() -> int:
-    if OFFSET_FILE.exists():
-        try:
-            return int(OFFSET_FILE.read_text(encoding="utf-8").strip())
-        except Exception:
-            return 0
-    return 0
+TELEGRAM_OFFSET_KEY = "telegram_offset"
+LAST_RUN_DATE_KEY = "last_run_date"
+LAST_RUN_AT_KEY = "last_run_at"
 
 
-def save_offset(offset: int) -> None:
-    OFFSET_FILE.write_text(str(offset), encoding="utf-8")
-
-
-def load_schedule_state() -> dict[str, str]:
-    if not SCHEDULE_STATE_FILE.exists():
-        return {}
-
-    try:
-        return json.loads(SCHEDULE_STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def save_schedule_state(*, last_run_at: datetime) -> None:
-    payload = {
-        "last_run_date": last_run_at.date().isoformat(),
-        "last_run_at": last_run_at.isoformat(),
-    }
-    SCHEDULE_STATE_FILE.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def tg_post(method: str, **kwargs) -> dict:
-    try:
-        response = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}",
-            json=kwargs,
-            timeout=10,
-        )
-        return response.json()
-    except Exception as error:
-        print(f"Telegram {method} error: {error}")
-        return {}
-
-
-def answer_callback(callback_id: str, text: str) -> None:
-    tg_post("answerCallbackQuery", callback_query_id=callback_id, text=text)
-
-
-def remove_buttons(chat_id: str, message_id: int) -> None:
-    tg_post(
-        "editMessageReplyMarkup",
-        chat_id=chat_id,
-        message_id=message_id,
-        reply_markup=json.dumps({"inline_keyboard": []}),
-    )
-
-
-def send_linkedin_preview(post_id: str, post: dict) -> None:
-    linkedin_body = post.get("linkedin_body", post.get("body", ""))[:1000]
+def send_linkedin_preview(
+    telegram: TelegramClient,
+    post_id: str,
+    post: dict[str, object],
+) -> None:
+    linkedin_body = str(post.get("linkedin_body") or post.get("recap") or "")[:1000]
     text = (
         "<b>LinkedIn Preview</b>\n"
         "----------------------\n"
         f"{escape_html(linkedin_body)}\n"
         "----------------------\n"
-        f"{escape_html(post.get('source_url', ''))}"
+        f"{escape_html(str(post.get('url', '')))}"
     )
     keyboard = {
         "inline_keyboard": [
@@ -113,37 +49,23 @@ def send_linkedin_preview(post_id: str, post: dict) -> None:
             ]
         ]
     }
-    tg_post(
-        "sendMessage",
-        chat_id=TELEGRAM_CHAT_ID,
+    telegram.send_message(
         text=text,
         parse_mode="HTML",
-        reply_markup=json.dumps(keyboard),
+        reply_markup=keyboard,
     )
 
 
-def handle_callbacks() -> None:
-    offset = load_offset()
-    pending = load_pending()
-
-    try:
-        response = requests.get(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
-            params={
-                "offset": offset,
-                "timeout": 2,
-                "allowed_updates": ["callback_query"],
-            },
-            timeout=10,
-        )
-        updates = response.json().get("result", [])
-    except Exception as error:
-        print(f"getUpdates error: {error}")
-        return
+def handle_callbacks(
+    settings: Settings,
+    storage: Storage,
+    telegram: TelegramClient,
+) -> None:
+    offset = int(storage.get_state(TELEGRAM_OFFSET_KEY, "0") or "0")
+    updates = telegram.get_updates(offset=offset, allowed_updates=["callback_query"])
 
     for update in updates:
-        save_offset(update["update_id"] + 1)
-
+        storage.set_state(TELEGRAM_OFFSET_KEY, str(update["update_id"] + 1))
         callback = update.get("callback_query")
         if not callback:
             continue
@@ -151,124 +73,152 @@ def handle_callbacks() -> None:
         data = callback.get("data", "")
         callback_id = callback["id"]
         message_id = callback.get("message", {}).get("message_id")
-        chat_id = callback.get("message", {}).get("chat", {}).get("id", TELEGRAM_CHAT_ID)
+        chat_id = str(
+            callback.get("message", {})
+            .get("chat", {})
+            .get("id", settings.telegram_chat_id)
+        )
 
         if data.startswith("linkedin:"):
             post_id = data.split(":", 1)[1]
-            post = pending.get(post_id)
-            if post:
-                answer_callback(callback_id, "Check the LinkedIn preview below.")
+            post = storage.get_article(post_id)
+            if post and post["status"] in {
+                ARTICLE_STATUS_QUEUED,
+                ARTICLE_STATUS_REVIEWING,
+            }:
+                storage.set_reviewing(post_id)
+                telegram.answer_callback(
+                    callback_id,
+                    "Check the LinkedIn preview below.",
+                )
                 if message_id:
-                    remove_buttons(chat_id, message_id)
-                send_linkedin_preview(post_id, post)
+                    telegram.remove_buttons(chat_id=chat_id, message_id=message_id)
+                send_linkedin_preview(telegram, post_id, post)
             else:
-                answer_callback(callback_id, "Already processed.")
+                telegram.answer_callback(callback_id, "Already processed.")
 
         elif data.startswith("linkedin_confirm:"):
             post_id = data.split(":", 1)[1]
-            post = pending.get(post_id)
-            if post:
-                print(f"LinkedIn publish: {post['title'][:80]}")
-                linkedin_post = {**post, "body": post.get("linkedin_body", post["body"])}
-                result = publish_to_linkedin(linkedin_post)
+            post = storage.get_article(post_id)
+            if post and post["status"] in {
+                ARTICLE_STATUS_QUEUED,
+                ARTICLE_STATUS_REVIEWING,
+            }:
+                logger.info("LinkedIn publish: %s", post["title"][:80])
+                result = publish_to_linkedin(
+                    settings,
+                    {
+                        "title": post["title"],
+                        "body": post.get("linkedin_body") or post.get("recap") or "",
+                        "tags": post["tags"],
+                        "source_url": post["url"],
+                    },
+                )
                 if result:
-                    answer_callback(callback_id, "Published to LinkedIn.")
+                    telegram.answer_callback(callback_id, "Published to LinkedIn.")
                     if message_id:
-                        remove_buttons(chat_id, message_id)
-                    del pending[post_id]
-                    save_pending(pending)
+                        telegram.remove_buttons(chat_id=chat_id, message_id=message_id)
+                    storage.mark_published(
+                        post_id,
+                        linkedin_post_id=str(result.get("id", "")),
+                    )
                 else:
-                    answer_callback(callback_id, "LinkedIn publish failed, try again.")
+                    telegram.answer_callback(
+                        callback_id,
+                        "LinkedIn publish failed, try again.",
+                    )
             else:
-                answer_callback(callback_id, "Already processed.")
+                telegram.answer_callback(callback_id, "Already processed.")
 
         elif data.startswith("linkedin_cancel:"):
+            post_id = data.split(":", 1)[1]
+            post = storage.get_article(post_id)
+            if post and post["status"] == ARTICLE_STATUS_REVIEWING:
+                storage.restore_queued(post_id)
             if message_id:
-                remove_buttons(chat_id, message_id)
-            answer_callback(callback_id, "Cancelled.")
+                telegram.remove_buttons(chat_id=chat_id, message_id=message_id)
+            telegram.answer_callback(callback_id, "Cancelled.")
 
         elif data.startswith("skip:"):
             post_id = data.split(":", 1)[1]
-            if post_id in pending:
-                del pending[post_id]
-                save_pending(pending)
+            if storage.get_article(post_id):
+                storage.mark_skipped(post_id)
             if message_id:
-                remove_buttons(chat_id, message_id)
-            answer_callback(callback_id, "Skipped.")
+                telegram.remove_buttons(chat_id=chat_id, message_id=message_id)
+            telegram.answer_callback(callback_id, "Skipped.")
 
 
-def get_scheduled_time(reference: datetime) -> datetime:
+def get_scheduled_time(settings: Settings, reference: datetime) -> datetime:
     return reference.replace(
-        hour=DAILY_RUN_HOUR,
-        minute=DAILY_RUN_MINUTE,
+        hour=settings.daily_run_hour,
+        minute=settings.daily_run_minute,
         second=0,
         microsecond=0,
     )
 
 
-def scheduler_thread() -> None:
-    state = load_schedule_state()
-    last_run_date = state.get("last_run_date")
-    last_announced_next_run: str | None = None
+def run_scheduler_tick(
+    settings: Settings,
+    storage: Storage,
+    telegram: TelegramClient,
+) -> str | None:
+    last_run_date = storage.get_state(LAST_RUN_DATE_KEY)
+    now_local = datetime.now(settings.schedule_timezone)
+    today_run = get_scheduled_time(settings, now_local)
+    today_key = now_local.date().isoformat()
 
-    while True:
-        now_local = datetime.now(SCHEDULE_TIMEZONE)
-        today_run = get_scheduled_time(now_local)
-        today_key = now_local.date().isoformat()
+    if now_local >= today_run and last_run_date != today_key:
+        logger.info(
+            "Scheduled parse started at %s",
+            now_local.strftime("%d.%m.%Y %H:%M:%S %Z"),
+        )
+        try:
+            run_parse_cycle(settings, storage, telegram)
+            storage.set_state(LAST_RUN_DATE_KEY, today_key)
+            storage.set_state(LAST_RUN_AT_KEY, now_local.isoformat())
+        except Exception as error:
+            logger.exception("Parse error: %s", error)
+        return None
 
-        if now_local >= today_run and last_run_date != today_key:
-            print(
-                f"\nScheduled parse started at "
-                f"{now_local.strftime('%d.%m.%Y %H:%M:%S %Z')}\n"
-            )
-            try:
-                run_parse_cycle()
-                save_schedule_state(last_run_at=now_local)
-                last_run_date = today_key
-            except Exception as error:
-                print(f"Parse error: {error}")
-            last_announced_next_run = None
-            time.sleep(5)
-            continue
-
-        next_run = today_run if now_local < today_run else today_run + timedelta(days=1)
-        next_run_key = next_run.isoformat()
-        if last_announced_next_run != next_run_key:
-            print(
-                "Next parse scheduled for "
-                f"{next_run.strftime('%d.%m.%Y %H:%M:%S %Z')} "
-                f"({SCHEDULE_LABEL})"
-            )
-            last_announced_next_run = next_run_key
-
-        seconds_until_next_run = max(5, int((next_run - now_local).total_seconds()))
-        time.sleep(min(60, seconds_until_next_run))
+    next_run = today_run if now_local < today_run else today_run + timedelta(days=1)
+    return next_run.isoformat()
 
 
 def main() -> None:
-    print("=" * 60)
-    print("News AI Parser Bot starting")
-    print(
-        f"Daily parse schedule: {DAILY_RUN_HOUR:02d}:{DAILY_RUN_MINUTE:02d} "
-        f"{SCHEDULE_LABEL}"
+    configure_logging()
+    settings = load_settings()
+    storage = Storage(settings.storage_path)
+    telegram = TelegramClient(settings)
+
+    logger.info("News AI Parser Bot starting")
+    logger.info(
+        "Daily parse schedule: %02d:%02d %s",
+        settings.daily_run_hour,
+        settings.daily_run_minute,
+        settings.schedule_timezone_name,
     )
-    print(f"Telegram poll interval: {POLL_INTERVAL_SECONDS} seconds")
-    print("=" * 60)
+    logger.info("Telegram poll interval: %s seconds", settings.poll_interval_seconds)
 
-    print("\nChecking connections...")
-    check_linkedin_connection()
-    print()
+    check_linkedin_connection(settings)
 
-    scheduler = threading.Thread(target=scheduler_thread, daemon=True)
-    scheduler.start()
-
-    print("Listening for Telegram callbacks...\n")
+    last_announced_next_run: str | None = None
     while True:
         try:
-            handle_callbacks()
+            next_run_key = run_scheduler_tick(settings, storage, telegram)
+            if next_run_key is None:
+                last_announced_next_run = None
+            if next_run_key and next_run_key != last_announced_next_run:
+                next_run = datetime.fromisoformat(next_run_key)
+                logger.info(
+                    "Next parse scheduled for %s (%s)",
+                    next_run.strftime("%d.%m.%Y %H:%M:%S %Z"),
+                    settings.schedule_timezone_name,
+                )
+                last_announced_next_run = next_run_key
+            handle_callbacks(settings, storage, telegram)
         except Exception as error:
-            print(f"Main loop error: {error}")
-        time.sleep(POLL_INTERVAL_SECONDS)
+            logger.exception("Main loop error: %s", error)
+        time.sleep(settings.poll_interval_seconds)
 
 
 if __name__ == "__main__":

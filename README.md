@@ -8,9 +8,20 @@
 
 News Parser is a small automation tool that collects fresh tech and cybersecurity stories from RSS feeds, rewrites them into concise factual recaps, sends them to Telegram for review, and lets you publish approved items to LinkedIn.
 
+## What Changed
+
+- Runtime state now lives in SQLite instead of multiple JSON files
+- Articles move through explicit statuses: `discovered`, `delivery_failed`, `queued`, `reviewing`, `published`, `skipped`
+- Feed definitions are stored in `feeds.json`
+- App settings are centralized in `app_config.py`
+- Logging uses the standard `logging` module instead of raw `print`
+- Story generation now uses one AI request for recap + LinkedIn copy
+- The parser optionally fetches article page text to improve prompt quality
+- CI now runs linting and tests in addition to syntax validation
+
 ## Overview
 
-- Runs one parsing cycle per day at `08:00` in the `Europe/Bratislava` timezone
+- Runs one parsing cycle per day at `08:00` in the `Europe/Bratislava` timezone by default
 - Pulls new items from curated RSS feeds
 - Generates:
   - a short recap of each story
@@ -18,45 +29,56 @@ News Parser is a small automation tool that collects fresh tech and cybersecurit
   - a daily summary with simple metrics
 - Sends review previews to Telegram
 - Publishes approved posts to LinkedIn
-
-## How It Works
-
-1. `parser.py` loads RSS feeds and detects new articles.
-2. `ai_generator.py` rewrites each story into a factual recap and LinkedIn post.
-3. `bot.py` sends previews to Telegram and handles callback actions.
-4. `linkedin_publisher.py` publishes approved items to LinkedIn.
-5. After the batch is finished, the bot sends a daily summary.
+- Retries articles that were discovered but failed before Telegram delivery
 
 ## Project Files
 
-- `bot.py` - scheduler and Telegram callback loop
-- `parser.py` - feed parsing, recap generation, Telegram delivery, and summary creation
-- `ai_generator.py` - Groq client wrapper and prompts
+- `bot.py` - main loop with scheduler and Telegram callback handling
+- `parser.py` - feed discovery, AI generation, Telegram delivery, and daily summary
+- `ai_generator.py` - Groq client wrapper and prompt orchestration
 - `linkedin_publisher.py` - LinkedIn publishing logic
-- `credentials.py` - Windows Credential Manager integration
+- `telegram_client.py` - Telegram HTTP client wrapper
+- `storage.py` - SQLite-backed persistence and lifecycle state
+- `content_fetcher.py` - optional article page text extraction
+- `app_config.py` - centralized configuration loading
+- `credentials.py` - credential loading from env, `.env`, and Windows Credential Manager
+- `feeds.json` - editable feed catalog
 - `poll.py` - one-shot callback polling entry point
-- `start.bat` - Windows bootstrap script
 
 ## Requirements
 
 - Python `3.11+`
-- Windows PowerShell
 - Telegram bot token and chat ID
 - Groq API key
 - LinkedIn access token with permission to create posts
 
 ## Configuration
 
-The project reads secrets from Windows Credential Manager.
+The app loads configuration in this order:
 
-Create credentials using the `MyApp/<KEY>` target format for:
+1. existing environment variables
+2. `.env`
+3. Windows Credential Manager targets in the `MyApp/<KEY>` format
+
+Required secrets:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
-- `GROQ_API_KEY`
 - `LINKEDIN_ACCESS_TOKEN`
 
-`.env.example` is included only as a reference template. Do not commit real secrets.
+Optional secret:
+
+- `GROQ_API_KEY`
+
+Useful runtime settings are listed in `.env.example`, including:
+
+- `SCHEDULE_TIMEZONE`
+- `DAILY_RUN_HOUR`
+- `DAILY_RUN_MINUTE`
+- `MAX_ENTRIES_PER_FEED`
+- `STORAGE_PATH`
+- `FEEDS_PATH`
+- `GROQ_MODEL`
 
 ## Install
 
@@ -64,26 +86,47 @@ Create credentials using the `MyApp/<KEY>` target format for:
 py -m venv venv
 .\venv\Scripts\activate
 py -m pip install -r requirements.txt
+py -m pip install -r requirements-dev.txt
 ```
 
 ## Run
+
+Start the bot loop:
 
 ```powershell
 py bot.py
 ```
 
-If you prefer, you can start it through:
+Run one parsing cycle directly:
 
 ```powershell
-.\start.bat
+py parser.py
+```
+
+Process Telegram callbacks once:
+
+```powershell
+py poll.py
+```
+
+## Testing
+
+```powershell
+py -m ruff check .
+py -m pytest -q -o addopts="-p no:cacheprovider --basetemp=pytest_run_tmp"
 ```
 
 ## CI
 
-GitHub Actions runs a lightweight validation workflow that installs dependencies and checks Python syntax for the main project files.
+GitHub Actions now performs:
 
-## Public Repository Notes
+- dependency installation
+- `ruff` linting
+- `pytest` execution
+- Python syntax validation
 
-- Runtime state files such as `pending.json`, `seen.json`, `tg_offset.txt`, and `schedule_state.json` are ignored
-- Local secrets are not tracked
-- The repository currently does not include a license file
+## Notes
+
+- Runtime state is stored in `news_parser.db` by default
+- Local secrets and temporary test directories are ignored by git
+- The repository still does not include a license file

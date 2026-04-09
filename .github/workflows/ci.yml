@@ -23,5 +23,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run Ruff
+        run: python -m ruff check .
+
+      - name: Run tests
+        run: python -m pytest -q -o addopts="-p no:cacheprovider --basetemp=pytest_run_tmp"
+
       - name: Validate syntax
         run: python -m py_compile ai_generator.py bot.py credentials.py linkedin_publisher.py parser.py poll.py

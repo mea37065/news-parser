@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Red NVD High CVEs",
+    "url": "https://cvefeed.io/rssfeed/severity/high.xml",
+    "tags": ["CVE", "vulnerability"]
+  },
+  {
+    "name": "Red The Hacker News",
+    "url": "https://feeds.feedburner.com/TheHackersNews",
+    "tags": ["cybersecurity"]
+  },
+  {
+    "name": "Red Krebs on Security",
+    "url": "https://krebsonsecurity.com/feed/",
+    "tags": ["cybersecurity"]
+  },
+  {
+    "name": "Orange Hacker News Top",
+    "url": "https://hnrss.org/frontpage",
+    "tags": ["hackernews", "tech"]
+  },
+  {
+    "name": "Blue VMware Blog",
+    "url": "https://blogs.vmware.com/feed",
+    "tags": ["VMware"]
+  },
+  {
+    "name": "Blue VMware Security",
+    "url": "https://via.vmw.com/sec-advisories-rss",
+    "tags": ["VMware", "CVE"]
+  },
+  {
+    "name": "Purple SentinelOne Blog",
+    "url": "https://www.sentinelone.com/blog/feed/",
+    "tags": ["SentinelOne"]
+  },
+  {
+    "name": "Cloud AWS News",
+    "url": "https://aws.amazon.com/blogs/aws/feed/",
+    "tags": ["AWS", "cloud"]
+  },
+  {
+    "name": "Cloud Kubernetes Blog",
+    "url": "https://kubernetes.io/feed.xml",
+    "tags": ["Kubernetes", "DevOps"]
+  }
+]
