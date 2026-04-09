@@ -6,51 +6,24 @@
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/)
 [![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
-News Parser is a small automation tool that collects fresh tech and cybersecurity stories from RSS feeds, rewrites them into concise factual recaps, sends them to Telegram for review, and lets you publish approved items to LinkedIn.
+News Parser collects tech and cybersecurity stories from RSS feeds, rewrites them into concise recaps, sends them to Telegram for review, and publishes approved posts to LinkedIn.
 
-## Overview
+## What It Does
 
-- Runs one parsing cycle per day at `08:00` in the `Europe/Bratislava` timezone by default
-- Pulls new items from curated RSS feeds
-- Generates:
-  - a short recap of each story
-  - a LinkedIn-ready version of the same story
-  - a daily summary with simple metrics
-- Sends review previews to Telegram
-- Publishes approved posts to LinkedIn
-- Retries articles that were discovered but failed before Telegram delivery
-
-## Project Files
-
-- `bot.py` - main loop with scheduler and Telegram callback handling
-- `parser.py` - feed discovery, AI generation, Telegram delivery, and daily summary
-- `ai_generator.py` - Groq client wrapper and prompt orchestration
-- `linkedin_publisher.py` - LinkedIn publishing logic
-- `telegram_client.py` - Telegram HTTP client wrapper
-- `storage.py` - SQLite-backed persistence and lifecycle state
-- `content_fetcher.py` - optional article page text extraction
-- `app_config.py` - centralized configuration loading
-- `credentials.py` - credential loading from env, `.env`, and Windows Credential Manager
-- `feeds.json` - editable feed catalog
-- `poll.py` - one-shot callback polling entry point
-
-## Architecture Notes
-
-- Runtime state lives in SQLite instead of multiple JSON files
-- Articles move through explicit statuses: `discovered`, `delivery_failed`, `queued`, `reviewing`, `published`, `skipped`
-- Feed definitions are stored in `feeds.json`
-- Story generation uses one AI request for recap + LinkedIn copy
-- The parser can fetch article page text to improve prompt quality
-- CI runs linting, tests, and syntax validation
+- pulls new stories from curated RSS feeds
+- generates a recap, a LinkedIn-ready version, and a daily summary
+- sends review messages to Telegram
+- publishes approved items to LinkedIn
+- stores runtime state in SQLite
 
 ## Requirements
 
 - Python `3.11+`
 - Telegram bot token and chat ID
-- Groq API key
-- LinkedIn access token with permission to create posts
+- LinkedIn access token
+- Groq API key if you want AI-generated recap and summary content
 
-## Quick Start From Zero
+## Quick Start
 
 Clone the repository:
 
@@ -68,38 +41,58 @@ py -m pip install -r requirements.txt
 py -m pip install -r requirements-dev.txt
 ```
 
-Create a local config file from the example:
+Create your local config:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Open `.env` and fill in at least:
+Fill in `.env` with at least:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `LINKEDIN_ACCESS_TOKEN`
-- `GROQ_API_KEY` if you want AI-generated recap and summary content
+- `GROQ_API_KEY` if AI features should be enabled
 
-Run the app:
+Start the bot:
 
 ```powershell
 py bot.py
 ```
 
-If you want the simple Windows bootstrap flow instead:
+Windows bootstrap script:
 
 ```powershell
 .\start.bat
 ```
 
-## Run As Windows Service
+## Run Modes
 
-For a long-running Windows setup, use `nssm` instead of `start.bat`.
+Main bot loop:
 
-Do not use `start.bat` as a service command because it is interactive, installs packages on startup, and ends with `pause`.
+```powershell
+py bot.py
+```
 
-Recommended service command:
+One parsing cycle:
+
+```powershell
+py parser.py
+```
+
+One Telegram callback poll:
+
+```powershell
+py poll.py
+```
+
+## Windows Service
+
+For a long-running Windows setup, use `nssm`.
+
+Do not use `start.bat` as the service command. It is interactive and meant for manual local runs.
+
+Example:
 
 ```powershell
 nssm install NewsParserBot "C:\path\to\news-parser\venv\Scripts\python.exe" "C:\path\to\news-parser\bot.py"
@@ -113,9 +106,7 @@ nssm set NewsParserBot AppRotateFiles 1
 nssm start NewsParserBot
 ```
 
-If your server does not use Windows Credential Manager for the service account, keep a filled `.env` file in the project root. The app loads `.env` automatically.
-
-Useful service commands:
+Useful commands:
 
 ```powershell
 nssm status NewsParserBot
@@ -124,27 +115,17 @@ nssm stop NewsParserBot
 nssm remove NewsParserBot confirm
 ```
 
+If the service account does not use Windows Credential Manager, keep a filled `.env` file in the project root.
+
 ## Configuration
 
-The app loads configuration in this order:
+Configuration is loaded in this order:
 
-1. existing environment variables
+1. environment variables
 2. `.env`
 3. Windows Credential Manager targets in the `MyApp/<KEY>` format
 
-The project is currently Windows-first because it supports Windows Credential Manager out of the box. If those credentials are not available, environment variables or `.env` still work.
-
-Required secrets:
-
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-- `LINKEDIN_ACCESS_TOKEN`
-
-Optional secret:
-
-- `GROQ_API_KEY`
-
-Useful runtime settings are listed in `.env.example`, including:
+Important settings are listed in `.env.example`, including:
 
 - `SCHEDULE_TIMEZONE`
 - `DAILY_RUN_HOUR`
@@ -154,53 +135,17 @@ Useful runtime settings are listed in `.env.example`, including:
 - `FEEDS_PATH`
 - `GROQ_MODEL`
 
-## Install
+## Development
 
-```powershell
-py -m venv venv
-.\venv\Scripts\activate
-py -m pip install -r requirements.txt
-py -m pip install -r requirements-dev.txt
-```
-
-## Run
-
-Start the bot loop:
-
-```powershell
-py bot.py
-```
-
-Run one parsing cycle directly:
-
-```powershell
-py parser.py
-```
-
-Process Telegram callbacks once:
-
-```powershell
-py poll.py
-```
-
-## Testing
+Run checks:
 
 ```powershell
 py -m ruff check .
 py -m pytest -q -o addopts="-p no:cacheprovider --basetemp=pytest_run_tmp"
 ```
 
-## CI
+GitHub Actions runs linting, tests, and syntax validation.
 
-GitHub Actions now performs:
+## License
 
-- dependency installation
-- `ruff` linting
-- `pytest` execution
-- Python syntax validation
-
-## Notes
-
-- Runtime state is stored in `news_parser.db` by default
-- Local secrets and temporary test directories are ignored by git
-- The project is licensed under Apache License 2.0
+Apache License 2.0. See `LICENSE`.
