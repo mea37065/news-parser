@@ -93,6 +93,37 @@ If you want the simple Windows bootstrap flow instead:
 .\start.bat
 ```
 
+## Run As Windows Service
+
+For a long-running Windows setup, use `nssm` instead of `start.bat`.
+
+Do not use `start.bat` as a service command because it is interactive, installs packages on startup, and ends with `pause`.
+
+Recommended service command:
+
+```powershell
+nssm install NewsParserBot "C:\path\to\news-parser\venv\Scripts\python.exe" "C:\path\to\news-parser\bot.py"
+nssm set NewsParserBot AppDirectory "C:\path\to\news-parser"
+nssm set NewsParserBot DisplayName "News Parser Bot"
+nssm set NewsParserBot Description "Parses RSS feeds, sends Telegram review messages, and publishes approved posts to LinkedIn."
+nssm set NewsParserBot Start SERVICE_AUTO_START
+nssm set NewsParserBot AppStdout "C:\path\to\news-parser\service-out.log"
+nssm set NewsParserBot AppStderr "C:\path\to\news-parser\service-error.log"
+nssm set NewsParserBot AppRotateFiles 1
+nssm start NewsParserBot
+```
+
+If your server does not use Windows Credential Manager for the service account, keep a filled `.env` file in the project root. The app loads `.env` automatically.
+
+Useful service commands:
+
+```powershell
+nssm status NewsParserBot
+nssm restart NewsParserBot
+nssm stop NewsParserBot
+nssm remove NewsParserBot confirm
+```
+
 ## Configuration
 
 The app loads configuration in this order:
