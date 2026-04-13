@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 try:
     from dotenv import load_dotenv
@@ -138,6 +138,15 @@ def load_settings(
         if missing:
             joined = ", ".join(missing)
             raise RuntimeError(f"Missing required configuration values: {joined}")
+
+    try:
+        ZoneInfo(settings.schedule_timezone_name)
+    except ZoneInfoNotFoundError as error:
+        raise RuntimeError(
+            "Missing timezone data for "
+            f"{settings.schedule_timezone_name}. "
+            "Install the tzdata package or set SCHEDULE_TIMEZONE to a valid timezone."
+        ) from error
 
     return settings
 
