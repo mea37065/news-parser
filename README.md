@@ -6,15 +6,27 @@
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/)
 [![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
-News Parser collects tech and cybersecurity stories from RSS feeds, rewrites them into concise recaps, sends them to Telegram for review, and publishes approved posts to LinkedIn.
+News Parser collects tech and cybersecurity stories from RSS feeds, rewrites them into concise recaps, sends them to Telegram for review, answers follow-up questions in chat, and publishes approved posts to LinkedIn with an article preview card.
 
 ## What It Does
 
 - pulls new stories from curated RSS feeds
-- generates a recap, a LinkedIn-ready version, and a daily summary
-- sends review messages to Telegram
-- publishes approved items to LinkedIn
+- generates a factual recap, a short LinkedIn-ready version, and a full daily briefing
+- sends review messages to Telegram with review and follow-up question actions
+- lets you ask extra questions about a story directly in Telegram chat
+- publishes approved items to LinkedIn as article shares with a richer link preview
 - stores runtime state in SQLite
+
+## Telegram Workflow
+
+For each story, the bot sends:
+
+- a short recap with `Review LinkedIn`
+- an `Ask a question` action that opens question mode for that article
+
+In question mode, send follow-up messages in the same chat. You can also reply directly to the article message. Use `/done` to close the active question context.
+
+At the end of the run, the bot sends a larger daily briefing designed to replace reading every single item one by one.
 
 ## Requirements
 
@@ -86,6 +98,8 @@ One Telegram callback poll:
 py poll.py
 ```
 
+`poll.py` now checks both inline button callbacks and regular chat messages so question mode works in the same loop.
+
 ## Windows Service
 
 For a long-running Windows setup, use `nssm`.
@@ -145,6 +159,12 @@ py -m pytest -q -o addopts="-p no:cacheprovider --basetemp=pytest_run_tmp"
 ```
 
 GitHub Actions runs linting, tests, and syntax validation.
+
+## LinkedIn Notes
+
+- the LinkedIn post text is intentionally short and does not repeat the article title as a heading
+- the source URL is attached as an article share so LinkedIn can render its own preview card
+- the preview quality still depends on the target website exposing usable Open Graph metadata
 
 ## License
 

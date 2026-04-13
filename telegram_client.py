@@ -58,6 +58,7 @@ class TelegramClient:
         parse_mode: str | None = None,
         reply_markup: dict[str, Any] | None = None,
         chat_id: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "chat_id": chat_id or self.settings.telegram_chat_id,
@@ -67,6 +68,8 @@ class TelegramClient:
             payload["parse_mode"] = parse_mode
         if reply_markup is not None:
             payload["reply_markup"] = json.dumps(reply_markup)
+        if reply_to_message_id is not None:
+            payload["reply_to_message_id"] = reply_to_message_id
         return self.post("sendMessage", **payload)
 
     def answer_callback(self, callback_id: str, text: str) -> None:

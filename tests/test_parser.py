@@ -78,4 +78,7 @@ def test_run_parse_cycle_queues_articles_and_sends_summary(
     assert article is not None
     assert article["status"] == ARTICLE_STATUS_QUEUED
     assert len(telegram.messages) == 2
-    assert "Daily Summary" in telegram.messages[-1]["text"]
+    assert "Daily Briefing" in telegram.messages[-1]["text"]
+    first_message = telegram.messages[0]
+    reply_markup = first_message["reply_markup"]
+    assert reply_markup["inline_keyboard"][0][1]["text"] == "Ask a question"

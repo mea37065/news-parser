@@ -30,6 +30,15 @@ Do not invent trends, causes, or implications that are not supported by the inpu
 Do not use emojis or hype.
 """.strip()
 
+FOLLOW_UP_ANSWER_SYSTEM_PROMPT = """
+You answer follow-up questions about a specific news item.
+
+Use only the supplied article facts, recap text, and summary.
+If the answer is not supported by the provided material, say so clearly.
+Do not speculate or add outside information.
+Do not use emojis.
+""".strip()
+
 
 def _article_context(article: dict[str, Any]) -> str:
     article_text = article.get("article_text", "").strip()
@@ -138,9 +147,10 @@ def generate_story_assets(
         "- Use 1-2 short paragraphs\n\n"
         "Rules for linkedin_post:\n"
         "- Language: English\n"
-        "- Length: 80-120 words total before hashtags\n"
+        "- Length: 35-60 words total before hashtags\n"
         "- Start with the key fact from the story\n"
         "- Keep it factual and conversational\n"
+        "- Do not include the article title as a heading or first standalone line\n"
         "- No emojis, bullets, or markdown\n"
         "- No hashtags in the body text\n"
         "- End with exactly 2-3 relevant hashtags on the last line only\n"
@@ -185,20 +195,24 @@ def generate_daily_summary(
     for index, article in enumerate(articles, start=1):
         article_lines.append(
             f"{index}. {article['title']} | Source: {article['source']} | "
-            f"Summary: {article['summary']}"
+            f"Summary: {article['summary']} | Recap: {article.get('recap', '')}"
         )
 
     prompt = (
-        "Create a daily summary for today's collected news.\n\n"
+        "Create a daily briefing for today's collected news.\n\n"
         "Rules:\n"
         "- Language: English\n"
-        "- Length: 120-180 words\n"
-        "- Mention the strongest themes and what stood out across the set of stories\n"
-        "- Keep the text neutral and information-dense\n"
+        "- Length: 260-420 words\n"
+        "- Write it for the reader who wants to understand the full batch "
+        "without opening every article\n"
+        "- Cover the main themes and briefly mention each important story "
+        "at least once\n"
+        "- Keep it neutral, crisp, and information-dense\n"
         "- Do not mention that an AI wrote it\n"
         "- Do not use bullets, markdown, emojis, or hashtags\n"
+        "- Prefer 3-5 short paragraphs\n"
         "- Use the supplied metrics naturally when relevant, "
-        "but do not simply list them all\n\n"
+        "but do not turn the answer into a metric list\n\n"
         f"Metrics: {metrics}\n\n"
         "Articles:\n"
         f"{chr(10).join(article_lines)}\n\n"
@@ -208,7 +222,7 @@ def generate_daily_summary(
         settings,
         system_prompt=DAILY_SUMMARY_SYSTEM_PROMPT,
         user_prompt=prompt,
-        max_tokens=320,
+        max_tokens=650,
         temperature=0.3,
     )
     if not response_text:
@@ -220,3 +234,44 @@ def generate_daily_summary(
 
     summary = str(payload.get("summary", "")).strip()
     return summary or None
+
+
+def generate_article_answer(
+    settings: Settings,
+    article: dict[str, Any],
+    question: str,
+) -> str | None:
+    if not settings.groq_api_key:
+        return None
+
+    prompt = (
+        "Answer the user's follow-up question about this news item.\n\n"
+        "Rules:\n"
+        "- Answer in the same language as the user's question when possible\n"
+        "- Length: 50-120 words\n"
+        "- Stay strictly grounded in the supplied article details\n"
+        "- If the supplied material does not answer the question, say that clearly\n"
+        "- Do not add outside facts or speculation\n"
+        "- Do not use bullets, markdown, or emojis\n\n"
+        f"Question: {question}\n\n"
+        f"{_article_context(article)}\n"
+        f"Recap: {article.get('recap', '')}\n"
+        f"LinkedIn draft: {article.get('linkedin_body', '')}\n\n"
+        'Return JSON with a single key named "answer".'
+    )
+    response_text = _call_groq(
+        settings,
+        system_prompt=FOLLOW_UP_ANSWER_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        max_tokens=220,
+        temperature=0.2,
+    )
+    if not response_text:
+        return None
+
+    payload = _extract_json_object(response_text)
+    if not payload:
+        return None
+
+    answer = str(payload.get("answer", "")).strip()
+    return answer or None

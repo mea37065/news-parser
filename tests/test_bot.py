@@ -4,13 +4,18 @@ import json
 
 from app_config import Settings
 from bot import handle_callbacks
-from storage import ARTICLE_STATUS_PUBLISHED, ARTICLE_STATUS_REVIEWING, Storage
+from storage import (
+    ARTICLE_STATUS_PUBLISHED,
+    ARTICLE_STATUS_QUEUED,
+    ARTICLE_STATUS_REVIEWING,
+    Storage,
+)
 
 
 class FakeTelegramClient:
     def __init__(self, updates):
         self._updates = updates
-        self.preview_messages: list[dict[str, object]] = []
+        self.messages: list[dict[str, object]] = []
         self.answered: list[str] = []
         self.removed: list[tuple[str, int]] = []
 
@@ -24,7 +29,7 @@ class FakeTelegramClient:
         self.removed.append((chat_id, message_id))
 
     def send_message(self, **payload):
-        self.preview_messages.append(payload)
+        self.messages.append(payload)
         return {"result": {"message_id": 999}}
 
 
@@ -34,7 +39,7 @@ def build_settings(tmp_path) -> Settings:
     return Settings(
         telegram_bot_token="token",
         telegram_chat_id="chat-id",
-        groq_api_key="",
+        groq_api_key="groq-key",
         groq_model="model",
         linkedin_access_token="linkedin-token",
         telegram_timeout_seconds=5,
@@ -53,9 +58,7 @@ def build_settings(tmp_path) -> Settings:
     )
 
 
-def test_handle_callbacks_moves_article_to_reviewing(tmp_path) -> None:
-    settings = build_settings(tmp_path)
-    storage = Storage(settings.storage_path)
+def queue_article(storage: Storage) -> None:
     storage.add_discovered_article(
         {
             "id": "article-1",
@@ -65,16 +68,22 @@ def test_handle_callbacks_moves_article_to_reviewing(tmp_path) -> None:
             "title": "Cloud update",
             "url": "https://example.com/cloud",
             "summary": "Summary",
-            "article_text": "",
+            "article_text": "Longer article text.",
             "date": "09.04.2026",
         }
     )
     storage.queue_article(
         "article-1",
         recap="Recap",
-        linkedin_body="LinkedIn preview",
+        linkedin_body="Short LinkedIn text\n\n#cloud #news",
         telegram_message_id=10,
     )
+
+
+def test_handle_callbacks_moves_article_to_reviewing(tmp_path) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    queue_article(storage)
     telegram = FakeTelegramClient(
         [
             {
@@ -96,31 +105,13 @@ def test_handle_callbacks_moves_article_to_reviewing(tmp_path) -> None:
     article = storage.get_article("article-1")
     assert article is not None
     assert article["status"] == ARTICLE_STATUS_REVIEWING
-    assert telegram.preview_messages
+    assert telegram.messages
 
 
 def test_handle_callbacks_publishes_to_linkedin(tmp_path, monkeypatch) -> None:
     settings = build_settings(tmp_path)
     storage = Storage(settings.storage_path)
-    storage.add_discovered_article(
-        {
-            "id": "article-1",
-            "fingerprint": "fingerprint-1",
-            "source": "Example Feed",
-            "tags": ["cloud"],
-            "title": "Cloud update",
-            "url": "https://example.com/cloud",
-            "summary": "Summary",
-            "article_text": "",
-            "date": "09.04.2026",
-        }
-    )
-    storage.queue_article(
-        "article-1",
-        recap="Recap",
-        linkedin_body="LinkedIn preview",
-        telegram_message_id=10,
-    )
+    queue_article(storage)
     telegram = FakeTelegramClient(
         [
             {
@@ -152,25 +143,7 @@ def test_handle_callbacks_publishes_to_linkedin(tmp_path, monkeypatch) -> None:
 def test_handle_callbacks_cancel_requeues_article(tmp_path) -> None:
     settings = build_settings(tmp_path)
     storage = Storage(settings.storage_path)
-    storage.add_discovered_article(
-        {
-            "id": "article-1",
-            "fingerprint": "fingerprint-1",
-            "source": "Example Feed",
-            "tags": ["cloud"],
-            "title": "Cloud update",
-            "url": "https://example.com/cloud",
-            "summary": "Summary",
-            "article_text": "",
-            "date": "09.04.2026",
-        }
-    )
-    storage.queue_article(
-        "article-1",
-        recap="Recap",
-        linkedin_body="LinkedIn preview",
-        telegram_message_id=10,
-    )
+    queue_article(storage)
     storage.set_reviewing("article-1")
     telegram = FakeTelegramClient(
         [
@@ -192,6 +165,62 @@ def test_handle_callbacks_cancel_requeues_article(tmp_path) -> None:
 
     article = storage.get_article("article-1")
     assert article is not None
-    assert article["status"] == "queued"
+    assert article["status"] == ARTICLE_STATUS_QUEUED
     assert article["telegram_message_id"] == 999
-    assert telegram.preview_messages
+    assert telegram.messages
+
+
+def test_handle_callbacks_enters_question_mode(tmp_path) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    queue_article(storage)
+    telegram = FakeTelegramClient(
+        [
+            {
+                "update_id": 1,
+                "callback_query": {
+                    "id": "cb-1",
+                    "data": "ask:article-1",
+                    "message": {
+                        "message_id": 321,
+                        "chat": {"id": "chat-id"},
+                    },
+                },
+            }
+        ]
+    )
+
+    handle_callbacks(settings, storage, telegram)
+
+    assert storage.get_state("pending_question:chat-id") == "article-1"
+    assert telegram.messages
+    assert "Question mode is active" in str(telegram.messages[-1]["text"])
+
+
+def test_handle_callbacks_answers_follow_up_question(tmp_path, monkeypatch) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    queue_article(storage)
+    storage.set_state("pending_question:chat-id", "article-1")
+    telegram = FakeTelegramClient(
+        [
+            {
+                "update_id": 1,
+                "message": {
+                    "message_id": 444,
+                    "chat": {"id": "chat-id"},
+                    "text": "What changed here?",
+                },
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "bot.generate_article_answer",
+        lambda settings, article, question: "The update focused on a cloud release.",
+    )
+
+    handle_callbacks(settings, storage, telegram)
+
+    assert telegram.messages
+    assert telegram.messages[-1]["text"] == "The update focused on a cloud release."
+    assert telegram.messages[-1]["reply_to_message_id"] == 444
