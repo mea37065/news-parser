@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -58,22 +59,26 @@ def check_linkedin_connection(settings: Settings) -> bool:
 
 
 def build_linkedin_text(post: dict[str, Any]) -> str:
-    parts = [
-        post["title"].strip(),
-        post["body"].strip(),
-        post.get("source_url", "").strip(),
-        " ".join(f"#{tag.replace(' ', '')}" for tag in post.get("tags", [])),
-    ]
-    text = "\n\n".join(part for part in parts if part).strip()
+    body = str(post.get("body") or "").strip()
+    hashtag_line = " ".join(f"#{tag.replace(' ', '')}" for tag in post.get("tags", []))
+    if hashtag_line and not re.search(r"#\w+", body):
+        body = f"{body}\n\n{hashtag_line}".strip()
+
+    text = body
     if len(text) <= LINKEDIN_MAX_TEXT_LENGTH:
         return text
 
-    overflow = len(text) - LINKEDIN_MAX_TEXT_LENGTH
-    body = post["body"].strip()
-    safe_body = body[:-overflow].rstrip() if overflow < len(body) else ""
-    parts[1] = safe_body
-    text = "\n\n".join(part for part in parts if part).strip()
-    return text[:LINKEDIN_MAX_TEXT_LENGTH]
+    lines = [line for line in body.splitlines() if line.strip()]
+    trailing_hashtags = lines[-1] if lines and re.search(r"#\w+", lines[-1]) else ""
+    prose_lines = lines[:-1] if trailing_hashtags else lines
+    prose = "\n".join(prose_lines).strip()
+    reserve = len(trailing_hashtags) + 2 if trailing_hashtags else 0
+    safe_prose_limit = max(LINKEDIN_MAX_TEXT_LENGTH - reserve, 0)
+    trimmed_prose = prose[:safe_prose_limit].rstrip()
+    if trailing_hashtags:
+        combined = f"{trimmed_prose}\n\n{trailing_hashtags}".strip()
+        return combined[:LINKEDIN_MAX_TEXT_LENGTH]
+    return trimmed_prose[:LINKEDIN_MAX_TEXT_LENGTH]
 
 
 def publish_to_linkedin(
@@ -84,14 +89,34 @@ def publish_to_linkedin(
     if not urn:
         return None
 
+    share_content: dict[str, Any] = {
+        "shareCommentary": {"text": build_linkedin_text(post)},
+        "shareMediaCategory": "NONE",
+    }
+    source_url = str(post.get("source_url") or "").strip()
+    if source_url:
+        share_content = {
+            "shareCommentary": {"text": build_linkedin_text(post)},
+            "shareMediaCategory": "ARTICLE",
+            "media": [
+                {
+                    "status": "READY",
+                    "originalUrl": source_url,
+                    "title": {"text": str(post.get("title") or "").strip()},
+                    "description": {
+                        "text": str(
+                            post.get("description") or post.get("body") or ""
+                        ).strip()[:220]
+                    },
+                }
+            ],
+        }
+
     payload = {
         "author": urn,
         "lifecycleState": "PUBLISHED",
         "specificContent": {
-            "com.linkedin.ugc.ShareContent": {
-                "shareCommentary": {"text": build_linkedin_text(post)},
-                "shareMediaCategory": "NONE",
-            }
+            "com.linkedin.ugc.ShareContent": share_content
         },
         "visibility": {
             "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",

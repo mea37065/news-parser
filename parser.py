@@ -74,7 +74,10 @@ def build_fallback_recap(article: dict[str, Any]) -> str:
 
 
 def build_fallback_linkedin_post(article: dict[str, Any]) -> str:
-    body = build_fallback_recap(article)[:700].strip()
+    body = strip_html(article.get("summary", "")).strip()
+    if not body:
+        body = build_fallback_recap(article)
+    body = body[:220].rstrip(" .,;:")
     hashtags = " ".join(f"#{normalize_hashtag(tag)}" for tag in article["tags"][:3])
     return f"{body}\n\n{hashtags}".strip()
 
@@ -157,7 +160,7 @@ def send_to_telegram_with_buttons(
         "inline_keyboard": [
             [
                 {"text": "Review LinkedIn", "callback_data": f"linkedin:{post_id}"},
-                {"text": "Skip", "callback_data": f"skip:{post_id}"},
+                {"text": "Ask a question", "callback_data": f"ask:{post_id}"},
             ]
         ]
     }
@@ -216,15 +219,31 @@ def build_daily_metrics(
     }
 
 
-def build_fallback_daily_summary(metrics: dict[str, Any]) -> str:
-    return (
-        f"Today's batch included {metrics['total_articles']} stories from "
-        f"{metrics['unique_sources']} sources. The busiest feed was "
-        f"{metrics['top_source']} with {metrics['top_source_count']} items, "
-        f"while the mix leaned toward {metrics['top_tag']} and related topics. "
-        f"Security-focused stories accounted for {metrics['security_count']} items, "
-        f"and cloud or platform updates appeared in {metrics['cloud_count']}."
+def build_fallback_daily_summary(
+    articles: list[dict[str, Any]],
+    metrics: dict[str, Any],
+) -> str:
+    story_lines = []
+    for article in articles:
+        recap = str(article.get("recap") or article.get("summary") or "").strip()
+        condensed = recap[:180].rstrip(" .,;:")
+        story_lines.append(
+            f"{article['title']} from {article['source']} focused on {condensed}."
+        )
+
+    opening = (
+        f"Today's briefing covered {metrics['total_articles']} fresh stories from "
+        f"{metrics['unique_sources']} sources. The busiest source was "
+        f"{metrics['top_source']} with {metrics['top_source_count']} items, and the "
+        f"overall mix leaned toward {metrics['top_tag']}, security, and cloud updates."
     )
+    coverage = " ".join(story_lines)
+    close = (
+        f"Security-related coverage accounted for {metrics['security_count']} items, "
+        f"cloud and platform changes appeared in {metrics['cloud_count']}, and the "
+        f"average recap length landed at about {metrics['avg_recap_words']} words."
+    )
+    return f"{opening}\n\n{coverage}\n\n{close}".strip()
 
 
 def format_daily_summary_message(
@@ -232,9 +251,9 @@ def format_daily_summary_message(
     metrics: dict[str, Any],
 ) -> str:
     return (
-        f"Daily Summary - {metrics['date']}\n\n"
+        f"Daily Briefing - {metrics['date']}\n\n"
         f"{summary_text}\n\n"
-        "Metrics:\n"
+        "Quick metrics:\n"
         f"- Articles: {metrics['total_articles']}\n"
         f"- Sources: {metrics['unique_sources']}\n"
         f"- Most active source: {metrics['top_source']} "
@@ -261,7 +280,7 @@ def run_parse_cycle(
         logger.info("No new articles to process.")
         telegram_client.send_message(
             text=(
-                f"Daily Summary - {datetime.now().strftime('%d.%m.%Y')}\n\n"
+                f"Daily Briefing - {datetime.now().strftime('%d.%m.%Y')}\n\n"
                 "No new articles were found in today's run."
             )
         )
@@ -329,7 +348,7 @@ def run_parse_cycle(
             logger.warning(
                 "Daily summary AI generation unavailable, using fallback summary."
             )
-            summary_text = build_fallback_daily_summary(metrics)
+            summary_text = build_fallback_daily_summary(processed_articles, metrics)
         telegram_client.send_message(
             text=format_daily_summary_message(summary_text, metrics)
         )

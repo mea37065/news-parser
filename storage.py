@@ -177,6 +177,17 @@ class Storage:
             ).fetchone()
         return self._row_to_article(row) if row else None
 
+    def get_article_by_telegram_message_id(
+        self,
+        telegram_message_id: int,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM articles WHERE telegram_message_id = ?",
+                (telegram_message_id,),
+            ).fetchone()
+        return self._row_to_article(row) if row else None
+
     def mark_delivery_failed(
         self,
         article_id: str,
@@ -253,4 +264,11 @@ class Storage:
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
                 """,
                 (key, value),
+            )
+
+    def delete_state(self, key: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM app_state WHERE key = ?",
+                (key,),
             )
