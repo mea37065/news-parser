@@ -80,14 +80,18 @@ def load_runtime_environment() -> None:
         if load_dotenv(dotenv_path=candidate, override=False):
             logger.info("Loaded environment variables from %s", candidate)
         else:
-            logger.info("Environment file detected but nothing was loaded from %s", candidate)
+            logger.info(
+                "Environment file detected but nothing was loaded from %s",
+                candidate,
+            )
         loaded_env_file = True
         break
 
     if not loaded_env_file:
         logger.warning(
             "No .env file was found in %s or %s. "
-            "The service will rely on environment variables or Windows Credential Manager.",
+            "The service will rely on environment variables "
+            "or Windows Credential Manager.",
             BASE_DIR,
             BASE_DIR.parent,
         )
