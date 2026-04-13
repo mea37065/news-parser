@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ except ImportError:  # pragma: no cover - fallback for minimal environments
 from credentials import load_credentials
 
 BASE_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,41 @@ def _get_int(name: str, default: int) -> int:
 
 
 def load_runtime_environment() -> None:
-    load_dotenv(override=False)
+    raw_env_file = os.environ.get("ENV_FILE", "").strip()
+    env_candidates: list[Path] = []
+
+    if raw_env_file:
+        env_candidates.append(Path(raw_env_file).expanduser())
+    env_candidates.extend(
+        [
+            BASE_DIR / ".env",
+            BASE_DIR.parent / ".env",
+        ]
+    )
+
+    loaded_env_file = False
+    seen_paths: set[Path] = set()
+    for candidate in env_candidates:
+        if not candidate or candidate in seen_paths:
+            continue
+        seen_paths.add(candidate)
+        if not candidate.exists():
+            continue
+        if load_dotenv(dotenv_path=candidate, override=False):
+            logger.info("Loaded environment variables from %s", candidate)
+        else:
+            logger.info("Environment file detected but nothing was loaded from %s", candidate)
+        loaded_env_file = True
+        break
+
+    if not loaded_env_file:
+        logger.warning(
+            "No .env file was found in %s or %s. "
+            "The service will rely on environment variables or Windows Credential Manager.",
+            BASE_DIR,
+            BASE_DIR.parent,
+        )
+
     load_credentials(required=False)
 
 

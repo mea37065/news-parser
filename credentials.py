@@ -51,7 +51,7 @@ def load_credentials(*, required: bool = True) -> None:
             logger.info("Loaded credential from Windows Credential Manager: %s", key)
         else:
             missing.append(key)
-            logger.info("Credential not found in Windows Credential Manager: %s", key)
+            logger.debug("Credential not found in Windows Credential Manager: %s", key)
 
     if required and missing:
         joined = ", ".join(missing)
