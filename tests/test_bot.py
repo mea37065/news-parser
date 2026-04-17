@@ -157,6 +157,17 @@ def test_handle_callbacks_cancel_requeues_article(tmp_path) -> None:
                         "chat": {"id": "chat-id"},
                     },
                 },
+            },
+            {
+                "update_id": 2,
+                "callback_query": {
+                    "id": "cb-2",
+                    "data": "linkedin:article-1",
+                    "message": {
+                        "message_id": 999,
+                        "chat": {"id": "chat-id"},
+                    },
+                },
             }
         ]
     )
@@ -165,9 +176,50 @@ def test_handle_callbacks_cancel_requeues_article(tmp_path) -> None:
 
     article = storage.get_article("article-1")
     assert article is not None
-    assert article["status"] == ARTICLE_STATUS_QUEUED
+    assert article["status"] == ARTICLE_STATUS_REVIEWING
     assert article["telegram_message_id"] == 999
+    assert len(telegram.messages) == 2
+    assert telegram.answered[:2] == [
+        "Cancelled. Review is available again.",
+        "Check the LinkedIn preview below.",
+    ]
+
+
+def test_handle_callbacks_regenerates_linkedin_preview(tmp_path, monkeypatch) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    queue_article(storage)
+    storage.set_reviewing("article-1")
+    telegram = FakeTelegramClient(
+        [
+            {
+                "update_id": 1,
+                "callback_query": {
+                    "id": "cb-1",
+                    "data": "linkedin_regenerate:article-1",
+                    "message": {
+                        "message_id": 321,
+                        "chat": {"id": "chat-id"},
+                    },
+                },
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "bot.regenerate_linkedin_post",
+        lambda settings, article: "Fresh LinkedIn wording\n\n#cloud #update",
+    )
+
+    handle_callbacks(settings, storage, telegram)
+
+    article = storage.get_article("article-1")
+    assert article is not None
+    assert article["status"] == ARTICLE_STATUS_REVIEWING
+    assert article["linkedin_body"] == "Fresh LinkedIn wording\n\n#cloud #update"
+    assert telegram.answered == ["Generated a new version."]
+    assert telegram.removed == [("chat-id", 321)]
     assert telegram.messages
+    assert "Fresh LinkedIn wording" in str(telegram.messages[-1]["text"])
 
 
 def test_handle_callbacks_enters_question_mode(tmp_path) -> None:

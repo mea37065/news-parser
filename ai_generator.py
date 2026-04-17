@@ -39,6 +39,14 @@ Do not speculate or add outside information.
 Do not use emojis.
 """.strip()
 
+LINKEDIN_REGENERATION_SYSTEM_PROMPT = """
+You rewrite a LinkedIn draft for a specific news item into a different version.
+
+Keep all facts grounded in the supplied article details.
+Do not add new facts, speculation, hype, or marketing language.
+Return valid JSON only.
+""".strip()
+
 
 def _article_context(article: dict[str, Any]) -> str:
     article_text = article.get("article_text", "").strip()
@@ -181,6 +189,50 @@ def generate_story_assets(
         "recap": recap,
         "linkedin_post": linkedin_post,
     }
+
+
+def regenerate_linkedin_post(
+    settings: Settings,
+    article: dict[str, Any],
+) -> str | None:
+    if not settings.groq_api_key:
+        return None
+
+    current_draft = str(article.get("linkedin_body") or "").strip()
+    prompt = (
+        "Create one alternative LinkedIn post for this news item.\n\n"
+        "Rules:\n"
+        "- Language: English\n"
+        "- Length: 35-60 words total before hashtags\n"
+        "- Keep the same facts, but vary the wording and sentence structure\n"
+        "- Start with the key fact from the story\n"
+        "- Keep it factual and conversational\n"
+        "- Do not include the article title as a heading or first standalone line\n"
+        "- No emojis, bullets, or markdown\n"
+        "- No hashtags in the body text\n"
+        "- End with exactly 2-3 relevant hashtags on the last line only\n"
+        "- Do not repeat the source URL in the post\n"
+        "- Do not reuse the current draft wording too closely\n\n"
+        f"Current draft to avoid repeating:\n{current_draft or 'Not available'}\n\n"
+        f"{_article_context(article)}\n\n"
+        'Return JSON with a single key named "linkedin_post".'
+    )
+    response_text = _call_groq(
+        settings,
+        system_prompt=LINKEDIN_REGENERATION_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        max_tokens=220,
+        temperature=0.7,
+    )
+    if not response_text:
+        return None
+
+    payload = _extract_json_object(response_text)
+    if not payload:
+        return None
+
+    linkedin_post = str(payload.get("linkedin_post", "")).strip()
+    return linkedin_post or None
 
 
 def generate_daily_summary(
