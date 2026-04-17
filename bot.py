@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 
-from ai_generator import generate_article_answer
+from ai_generator import generate_article_answer, regenerate_linkedin_post
 from app_config import Settings, load_settings
 from linkedin_publisher import check_linkedin_connection, publish_to_linkedin
 from logging_config import configure_logging
@@ -39,6 +39,12 @@ def send_linkedin_preview(
     )
     keyboard = {
         "inline_keyboard": [
+            [
+                {
+                    "text": "Regenerate",
+                    "callback_data": f"linkedin_regenerate:{post_id}",
+                }
+            ],
             [
                 {
                     "text": "Publish to LinkedIn",
@@ -189,6 +195,29 @@ def handle_callback(
             telegram.answer_callback(callback_id, "Already processed.")
         return
 
+    if data.startswith("linkedin_regenerate:"):
+        post_id = data.split(":", 1)[1]
+        post = storage.get_article(post_id)
+        if post and post["status"] == ARTICLE_STATUS_REVIEWING:
+            new_linkedin_body = regenerate_linkedin_post(settings, post)
+            if not new_linkedin_body:
+                telegram.answer_callback(
+                    callback_id,
+                    "Could not generate a new version.",
+                )
+                return
+
+            storage.update_linkedin_body(post_id, new_linkedin_body)
+            refreshed_post = storage.get_article(post_id) or {**post}
+            refreshed_post["linkedin_body"] = new_linkedin_body
+            telegram.answer_callback(callback_id, "Generated a new version.")
+            if message_id:
+                telegram.remove_buttons(chat_id=chat_id, message_id=message_id)
+            send_linkedin_preview(telegram, post_id, refreshed_post)
+        else:
+            telegram.answer_callback(callback_id, "Review is no longer active.")
+        return
+
     if data.startswith("linkedin_confirm:"):
         post_id = data.split(":", 1)[1]
         post = storage.get_article(post_id)
@@ -245,7 +274,7 @@ def handle_callback(
                 storage.restore_queued(post_id)
         if message_id:
             telegram.remove_buttons(chat_id=chat_id, message_id=message_id)
-        telegram.answer_callback(callback_id, "Cancelled.")
+        telegram.answer_callback(callback_id, "Cancelled. Review is available again.")
         return
 
     if data.startswith("ask:"):

@@ -224,6 +224,9 @@ class Storage:
     def restore_queued(self, article_id: str) -> None:
         self._update_article(article_id, status=ARTICLE_STATUS_QUEUED)
 
+    def update_linkedin_body(self, article_id: str, linkedin_body: str) -> None:
+        self._update_article(article_id, linkedin_body=linkedin_body)
+
     def mark_published(self, article_id: str, *, linkedin_post_id: str = "") -> None:
         self._update_article(
             article_id,
