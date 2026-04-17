@@ -222,6 +222,95 @@ def test_handle_callbacks_regenerates_linkedin_preview(tmp_path, monkeypatch) ->
     assert "Fresh LinkedIn wording" in str(telegram.messages[-1]["text"])
 
 
+def test_handle_callbacks_enters_edit_mode(tmp_path) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    queue_article(storage)
+    storage.set_reviewing("article-1")
+    telegram = FakeTelegramClient(
+        [
+            {
+                "update_id": 1,
+                "callback_query": {
+                    "id": "cb-1",
+                    "data": "linkedin_edit:article-1",
+                    "message": {
+                        "message_id": 321,
+                        "chat": {"id": "chat-id"},
+                    },
+                },
+            }
+        ]
+    )
+
+    handle_callbacks(settings, storage, telegram)
+
+    assert storage.get_state("pending_edit:chat-id") == "article-1"
+    assert telegram.answered == ["Send the replacement text in chat."]
+    assert telegram.messages
+    assert "Edit mode is active" in str(telegram.messages[-1]["text"])
+
+
+def test_handle_callbacks_saves_manual_linkedin_edit(tmp_path) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    queue_article(storage)
+    storage.set_reviewing("article-1")
+    storage.set_state("pending_edit:chat-id", "article-1")
+    telegram = FakeTelegramClient(
+        [
+            {
+                "update_id": 1,
+                "message": {
+                    "message_id": 555,
+                    "chat": {"id": "chat-id"},
+                    "text": "Manual LinkedIn rewrite\n\n#cloud #infra",
+                },
+            }
+        ]
+    )
+
+    handle_callbacks(settings, storage, telegram)
+
+    article = storage.get_article("article-1")
+    assert article is not None
+    assert article["status"] == ARTICLE_STATUS_REVIEWING
+    assert article["linkedin_body"] == "Manual LinkedIn rewrite\n\n#cloud #infra"
+    assert storage.get_state("pending_edit:chat-id") == ""
+    assert len(telegram.messages) == 2
+    assert telegram.messages[0]["text"] == "Draft updated. Here is the refreshed LinkedIn preview."
+    assert "Manual LinkedIn rewrite" in str(telegram.messages[1]["text"])
+
+
+def test_handle_callbacks_closes_edit_mode_on_cancel_command(tmp_path) -> None:
+    settings = build_settings(tmp_path)
+    storage = Storage(settings.storage_path)
+    queue_article(storage)
+    storage.set_reviewing("article-1")
+    storage.set_state("pending_edit:chat-id", "article-1")
+    telegram = FakeTelegramClient(
+        [
+            {
+                "update_id": 1,
+                "message": {
+                    "message_id": 556,
+                    "chat": {"id": "chat-id"},
+                    "text": "/cancel",
+                },
+            }
+        ]
+    )
+
+    handle_callbacks(settings, storage, telegram)
+
+    assert storage.get_state("pending_edit:chat-id") == ""
+    assert telegram.messages
+    assert (
+        telegram.messages[-1]["text"]
+        == "Edit mode closed. Review is still available for this story."
+    )
+
+
 def test_handle_callbacks_enters_question_mode(tmp_path) -> None:
     settings = build_settings(tmp_path)
     storage = Storage(settings.storage_path)

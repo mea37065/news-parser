@@ -22,6 +22,7 @@ TELEGRAM_OFFSET_KEY = "telegram_offset"
 LAST_RUN_DATE_KEY = "last_run_date"
 LAST_RUN_AT_KEY = "last_run_at"
 PENDING_QUESTION_KEY_PREFIX = "pending_question"
+PENDING_EDIT_KEY_PREFIX = "pending_edit"
 
 
 def send_linkedin_preview(
@@ -43,7 +44,11 @@ def send_linkedin_preview(
                 {
                     "text": "Regenerate",
                     "callback_data": f"linkedin_regenerate:{post_id}",
-                }
+                },
+                {
+                    "text": "Edit text",
+                    "callback_data": f"linkedin_edit:{post_id}",
+                },
             ],
             [
                 {
@@ -68,12 +73,24 @@ def _pending_question_key(chat_id: str) -> str:
     return f"{PENDING_QUESTION_KEY_PREFIX}:{chat_id}"
 
 
+def _pending_edit_key(chat_id: str) -> str:
+    return f"{PENDING_EDIT_KEY_PREFIX}:{chat_id}"
+
+
 def _set_pending_question(storage: Storage, chat_id: str, article_id: str) -> None:
     storage.set_state(_pending_question_key(chat_id), article_id)
 
 
+def _set_pending_edit(storage: Storage, chat_id: str, article_id: str) -> None:
+    storage.set_state(_pending_edit_key(chat_id), article_id)
+
+
 def _clear_pending_question(storage: Storage, chat_id: str) -> None:
     storage.delete_state(_pending_question_key(chat_id))
+
+
+def _clear_pending_edit(storage: Storage, chat_id: str) -> None:
+    storage.delete_state(_pending_edit_key(chat_id))
 
 
 def _get_pending_question_article(
@@ -81,6 +98,16 @@ def _get_pending_question_article(
     chat_id: str,
 ) -> dict[str, object] | None:
     article_id = storage.get_state(_pending_question_key(chat_id))
+    if not article_id:
+        return None
+    return storage.get_article(article_id)
+
+
+def _get_pending_edit_article(
+    storage: Storage,
+    chat_id: str,
+) -> dict[str, object] | None:
+    article_id = storage.get_state(_pending_edit_key(chat_id))
     if not article_id:
         return None
     return storage.get_article(article_id)
@@ -135,8 +162,17 @@ def handle_message(
     if not text:
         return
 
+    pending_edit_article = _get_pending_edit_article(storage, chat_id)
     pending_article = _get_pending_question_article(storage, chat_id)
     if text.lower() in {"/done", "/stop", "/cancel"}:
+        if pending_edit_article:
+            _clear_pending_edit(storage, chat_id)
+            telegram.send_message(
+                chat_id=chat_id,
+                text="Edit mode closed. Review is still available for this story.",
+                reply_to_message_id=message.get("message_id"),
+            )
+            return
         if pending_article:
             _clear_pending_question(storage, chat_id)
             telegram.send_message(
@@ -144,6 +180,29 @@ def handle_message(
                 text="Question mode closed for this story.",
                 reply_to_message_id=message.get("message_id"),
             )
+        return
+
+    if pending_edit_article:
+        if pending_edit_article["status"] != ARTICLE_STATUS_REVIEWING:
+            _clear_pending_edit(storage, chat_id)
+            telegram.send_message(
+                chat_id=chat_id,
+                text="Editing is no longer active for this story.",
+                reply_to_message_id=message.get("message_id"),
+            )
+            return
+
+        storage.update_linkedin_body(pending_edit_article["id"], text)
+        _clear_pending_edit(storage, chat_id)
+        refreshed_article = storage.get_article(pending_edit_article["id"])
+        if refreshed_article is None:
+            return
+        telegram.send_message(
+            chat_id=chat_id,
+            text="Draft updated. Here is the refreshed LinkedIn preview.",
+            reply_to_message_id=message.get("message_id"),
+        )
+        send_linkedin_preview(telegram, refreshed_article["id"], refreshed_article)
         return
 
     article = _resolve_question_article(storage, chat_id, message)
@@ -183,6 +242,7 @@ def handle_callback(
             ARTICLE_STATUS_QUEUED,
             ARTICLE_STATUS_REVIEWING,
         }:
+            _clear_pending_edit(storage, chat_id)
             storage.set_reviewing(post_id)
             telegram.answer_callback(
                 callback_id,
@@ -193,6 +253,26 @@ def handle_callback(
             send_linkedin_preview(telegram, post_id, post)
         else:
             telegram.answer_callback(callback_id, "Already processed.")
+        return
+
+    if data.startswith("linkedin_edit:"):
+        post_id = data.split(":", 1)[1]
+        post = storage.get_article(post_id)
+        if post and post["status"] == ARTICLE_STATUS_REVIEWING:
+            _clear_pending_question(storage, chat_id)
+            _set_pending_edit(storage, chat_id, post_id)
+            telegram.answer_callback(callback_id, "Send the replacement text in chat.")
+            telegram.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"Edit mode is active for \"{post['title']}\".\n"
+                    "Send the full replacement LinkedIn text in one message. "
+                    "Send /cancel when you want to stop editing."
+                ),
+                reply_to_message_id=message_id,
+            )
+        else:
+            telegram.answer_callback(callback_id, "Review is no longer active.")
         return
 
     if data.startswith("linkedin_regenerate:"):
@@ -225,6 +305,7 @@ def handle_callback(
             ARTICLE_STATUS_QUEUED,
             ARTICLE_STATUS_REVIEWING,
         }:
+            _clear_pending_edit(storage, chat_id)
             logger.info("LinkedIn publish: %s", post["title"][:80])
             result = publish_to_linkedin(
                 settings,
@@ -257,6 +338,7 @@ def handle_callback(
         post_id = data.split(":", 1)[1]
         post = storage.get_article(post_id)
         if post and post["status"] == ARTICLE_STATUS_REVIEWING:
+            _clear_pending_edit(storage, chat_id)
             new_message_id = send_to_telegram_with_buttons(
                 telegram,
                 post,
@@ -284,6 +366,7 @@ def handle_callback(
             telegram.answer_callback(callback_id, "This story is no longer available.")
             return
 
+        _clear_pending_edit(storage, chat_id)
         _set_pending_question(storage, chat_id, post_id)
         telegram.answer_callback(callback_id, "Send your question in chat.")
         telegram.send_message(
