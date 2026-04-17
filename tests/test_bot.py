@@ -6,7 +6,6 @@ from app_config import Settings
 from bot import handle_callbacks
 from storage import (
     ARTICLE_STATUS_PUBLISHED,
-    ARTICLE_STATUS_QUEUED,
     ARTICLE_STATUS_REVIEWING,
     Storage,
 )
@@ -278,7 +277,10 @@ def test_handle_callbacks_saves_manual_linkedin_edit(tmp_path) -> None:
     assert article["linkedin_body"] == "Manual LinkedIn rewrite\n\n#cloud #infra"
     assert storage.get_state("pending_edit:chat-id") == ""
     assert len(telegram.messages) == 2
-    assert telegram.messages[0]["text"] == "Draft updated. Here is the refreshed LinkedIn preview."
+    assert (
+        telegram.messages[0]["text"]
+        == "Draft updated. Here is the refreshed LinkedIn preview."
+    )
     assert "Manual LinkedIn rewrite" in str(telegram.messages[1]["text"])
 
 
