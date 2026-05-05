@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      - windows-nssm
+      - linux-systemd
       - feature/**
   pull_request:
 
