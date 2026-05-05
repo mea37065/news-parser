@@ -4,7 +4,7 @@
 [![Telegram](https://img.shields.io/badge/Telegram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://telegram.org/)
 [![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)](https://groq.com/)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/)
-[![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+[![Windows](https://img.shields.io/badge/Windows_NSSM-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
 News Parser collects tech and cybersecurity stories from RSS feeds, rewrites them into concise recaps, sends them to Telegram for review, answers follow-up questions in chat, and publishes approved posts to LinkedIn with an article preview card.
 
@@ -100,24 +100,16 @@ py poll.py
 
 `poll.py` now checks both inline button callbacks and regular chat messages so question mode works in the same loop.
 
-## Windows Service
+## Windows Service With NSSM
 
-For a long-running Windows setup, use `nssm`.
+This branch is tailored for Windows and uses Non-Sucking Service Manager (`nssm`) for a long-running service.
 
 Do not use `start.bat` as the service command. It is interactive and meant for manual local runs.
 
-Example:
+Install `nssm`, make sure `nssm.exe` is available on `PATH`, then run PowerShell as Administrator:
 
 ```powershell
-nssm install NewsParserBot "C:\path\to\news-parser\venv\Scripts\python.exe" "C:\path\to\news-parser\bot.py"
-nssm set NewsParserBot AppDirectory "C:\path\to\news-parser"
-nssm set NewsParserBot DisplayName "News Parser Bot"
-nssm set NewsParserBot Description "Parses RSS feeds, sends Telegram review messages, and publishes approved posts to LinkedIn."
-nssm set NewsParserBot Start SERVICE_AUTO_START
-nssm set NewsParserBot AppStdout "C:\path\to\news-parser\service-out.log"
-nssm set NewsParserBot AppStderr "C:\path\to\news-parser\service-error.log"
-nssm set NewsParserBot AppRotateFiles 1
-nssm start NewsParserBot
+.\scripts\windows\install-nssm-service.ps1 -Start
 ```
 
 Useful commands:
@@ -127,6 +119,12 @@ nssm status NewsParserBot
 nssm restart NewsParserBot
 nssm stop NewsParserBot
 nssm remove NewsParserBot confirm
+```
+
+To remove the service:
+
+```powershell
+.\scripts\windows\uninstall-nssm-service.ps1
 ```
 
 If the service account does not use Windows Credential Manager, keep a filled `.env` file in the project root.
