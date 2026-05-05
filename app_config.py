@@ -44,21 +44,21 @@ class Settings:
     max_entries_per_feed: int
     storage_path: Path
     feeds_path: Path
-    interest_categories: tuple[str, ...]
-    feed_fetch_timeout_seconds: int
-    enable_article_fetch: bool
     article_fetch_timeout_seconds: int
     article_text_char_limit: int
     groq_request_delay_seconds: int
     groq_request_timeout_seconds: int
     groq_max_retries: int
-    linkedin_author_urn: str
-    linkedin_request_timeout_seconds: int
-    linkedin_max_retries: int
-    linkedin_retry_backoff_seconds: int
-    linkedin_check_on_startup: bool
-    linkedin_diagnostics_on_startup: bool
-    linkedin_diagnostics_timeout_seconds: int
+    interest_categories: tuple[str, ...] = DEFAULT_NEWS_INTEREST_CATEGORIES
+    feed_fetch_timeout_seconds: int = 10
+    enable_article_fetch: bool = True
+    linkedin_author_urn: str = ""
+    linkedin_request_timeout_seconds: int = 30
+    linkedin_max_retries: int = 3
+    linkedin_retry_backoff_seconds: int = 5
+    linkedin_check_on_startup: bool = True
+    linkedin_diagnostics_on_startup: bool = False
+    linkedin_diagnostics_timeout_seconds: int = 20
 
     @property
     def schedule_timezone(self) -> ZoneInfo:
