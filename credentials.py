@@ -48,15 +48,17 @@ def load_credentials(*, required: bool = True) -> None:
         value = _read_credential(key)
         if value:
             os.environ[key] = value
-            logger.info("Loaded credential from Windows Credential Manager: %s", key)
+            logger.info("Loaded credential from host credential store: %s", key)
         else:
             missing.append(key)
-            logger.debug("Credential not found in Windows Credential Manager: %s", key)
+            logger.debug(
+                "Credential not found in environment or host credential store: %s",
+                key,
+            )
 
     if required and missing:
         joined = ", ".join(missing)
         raise RuntimeError(
             f"Missing required credentials: {joined}. "
-            "Provide them via environment variables, .env, "
-            "or Windows Credential Manager."
+            "Provide them via environment variables or .env."
         )

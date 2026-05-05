@@ -90,8 +90,7 @@ def load_runtime_environment() -> None:
     if not loaded_env_file:
         logger.warning(
             "No .env file was found in %s or %s. "
-            "The service will rely on environment variables "
-            "or Windows Credential Manager.",
+            "The service will rely on environment variables.",
             BASE_DIR,
             BASE_DIR.parent,
         )

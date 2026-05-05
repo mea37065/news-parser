@@ -1,0 +1,23 @@
+[Unit]
+Description=News Parser Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=news-parser
+Group=news-parser
+WorkingDirectory=/opt/news-parser
+EnvironmentFile=/opt/news-parser/.env
+ExecStart=/opt/news-parser/venv/bin/python /opt/news-parser/bot.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/news-parser
+
+[Install]
+WantedBy=multi-user.target
