@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,10 +15,18 @@ except ImportError:  # pragma: no cover - fallback for minimal environments
     def load_dotenv(*args: Any, **kwargs: Any) -> bool:
         return False
 
-from credentials import load_credentials
-
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
+DEFAULT_NEWS_INTEREST_CATEGORIES = (
+    "general",
+    "world",
+    "business",
+    "technology",
+    "science",
+    "health",
+    "culture",
+)
+ALL_INTEREST_MARKERS = {"all", "*"}
 
 
 @dataclass(frozen=True)
@@ -35,11 +44,21 @@ class Settings:
     max_entries_per_feed: int
     storage_path: Path
     feeds_path: Path
+    interest_categories: tuple[str, ...]
+    feed_fetch_timeout_seconds: int
+    enable_article_fetch: bool
     article_fetch_timeout_seconds: int
     article_text_char_limit: int
     groq_request_delay_seconds: int
     groq_request_timeout_seconds: int
     groq_max_retries: int
+    linkedin_author_urn: str
+    linkedin_request_timeout_seconds: int
+    linkedin_max_retries: int
+    linkedin_retry_backoff_seconds: int
+    linkedin_check_on_startup: bool
+    linkedin_diagnostics_on_startup: bool
+    linkedin_diagnostics_timeout_seconds: int
 
     @property
     def schedule_timezone(self) -> ZoneInfo:
@@ -54,6 +73,48 @@ def _get_int(name: str, default: int) -> int:
         return int(raw_value)
     except ValueError as error:
         raise ValueError(f"Environment variable {name} must be an integer.") from error
+
+
+def _get_bool(name: str, default: bool) -> bool:
+    raw_value = os.environ.get(name, "").strip().lower()
+    if not raw_value:
+        return default
+    if raw_value in {"1", "true", "yes", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"Environment variable {name} must be a boolean "
+        "(1/0, true/false, yes/no, on/off)."
+    )
+
+
+def _normalize_interest_token(value: Any) -> str:
+    if value is None:
+        return ""
+    token = str(value).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "-", token).strip("-")
+
+
+def _get_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw_value = os.environ.get(name, "").strip()
+    if not raw_value:
+        return default
+
+    values: list[str] = []
+    seen: set[str] = set()
+    for part in raw_value.split(","):
+        marker = part.strip().lower()
+        normalized = (
+            marker
+            if marker in ALL_INTEREST_MARKERS
+            else _normalize_interest_token(part)
+        )
+        if not normalized or normalized in seen:
+            continue
+        values.append(normalized)
+        seen.add(normalized)
+    return tuple(values) or default
 
 
 def load_runtime_environment() -> None:
@@ -90,13 +151,10 @@ def load_runtime_environment() -> None:
     if not loaded_env_file:
         logger.warning(
             "No .env file was found in %s or %s. "
-            "The service will rely on environment variables "
-            "or Windows Credential Manager.",
+            "The app will rely on environment variables.",
             BASE_DIR,
             BASE_DIR.parent,
         )
-
-    load_credentials(required=False)
 
 
 def load_settings(
@@ -124,11 +182,36 @@ def load_settings(
         storage_path=BASE_DIR
         / os.environ.get("STORAGE_PATH", "news_parser.db").strip(),
         feeds_path=BASE_DIR / os.environ.get("FEEDS_PATH", "feeds.json").strip(),
+        interest_categories=_get_csv(
+            "NEWS_INTEREST_CATEGORIES",
+            DEFAULT_NEWS_INTEREST_CATEGORIES,
+        ),
+        feed_fetch_timeout_seconds=_get_int("FEED_FETCH_TIMEOUT_SECONDS", 10),
+        enable_article_fetch=_get_bool("ENABLE_ARTICLE_FETCH", True),
         article_fetch_timeout_seconds=_get_int("ARTICLE_FETCH_TIMEOUT_SECONDS", 10),
         article_text_char_limit=_get_int("ARTICLE_TEXT_CHAR_LIMIT", 4000),
         groq_request_delay_seconds=_get_int("GROQ_REQUEST_DELAY_SECONDS", 3),
         groq_request_timeout_seconds=_get_int("GROQ_REQUEST_TIMEOUT_SECONDS", 30),
         groq_max_retries=_get_int("GROQ_MAX_RETRIES", 3),
+        linkedin_author_urn=os.environ.get("LINKEDIN_AUTHOR_URN", "").strip(),
+        linkedin_request_timeout_seconds=_get_int(
+            "LINKEDIN_REQUEST_TIMEOUT_SECONDS",
+            30,
+        ),
+        linkedin_max_retries=_get_int("LINKEDIN_MAX_RETRIES", 3),
+        linkedin_retry_backoff_seconds=_get_int(
+            "LINKEDIN_RETRY_BACKOFF_SECONDS",
+            5,
+        ),
+        linkedin_check_on_startup=_get_bool("LINKEDIN_CHECK_ON_STARTUP", True),
+        linkedin_diagnostics_on_startup=_get_bool(
+            "LINKEDIN_DIAGNOSTICS_ON_STARTUP",
+            False,
+        ),
+        linkedin_diagnostics_timeout_seconds=_get_int(
+            "LINKEDIN_DIAGNOSTICS_TIMEOUT_SECONDS",
+            20,
+        ),
     )
 
     if validate_secrets:
@@ -162,6 +245,10 @@ def load_feed_configs(settings: Settings) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         raise ValueError("feeds.json must contain a list of feed definitions.")
 
+    active_categories = set(settings.interest_categories)
+    if active_categories & ALL_INTEREST_MARKERS:
+        active_categories = set()
+
     feeds: list[dict[str, Any]] = []
     for item in payload:
         if not isinstance(item, dict):
@@ -171,12 +258,41 @@ def load_feed_configs(settings: Settings) -> list[dict[str, Any]]:
         tags = item.get("tags", [])
         if not name or not url or not isinstance(tags, list):
             raise ValueError("Each feed requires name, url, and tags fields.")
+        normalized_tags = [
+            _normalize_interest_token(tag) for tag in tags if str(tag).strip()
+        ]
+        category = (
+            _normalize_interest_token(item.get("category"))
+            or next((tag for tag in normalized_tags if tag), "")
+            or "general"
+        )
+        feed_terms = {category, *normalized_tags}
+        if active_categories and feed_terms.isdisjoint(active_categories):
+            continue
+
+        clean_tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+        if category not in {_normalize_interest_token(tag) for tag in clean_tags}:
+            clean_tags.insert(0, category)
+        max_entries = None
+        raw_max_entries = item.get("max_entries")
+        if raw_max_entries not in {None, ""}:
+            try:
+                max_entries = int(raw_max_entries)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Feed max_entries must be an integer.") from error
+            if max_entries < 1:
+                raise ValueError("Feed max_entries must be at least 1.")
+
+        feed = {
+            "name": name,
+            "url": url,
+            "category": category,
+            "tags": clean_tags,
+        }
+        if max_entries is not None:
+            feed["max_entries"] = max_entries
         feeds.append(
-            {
-                "name": name,
-                "url": url,
-                "tags": [str(tag).strip() for tag in tags if str(tag).strip()],
-            }
+            feed
         )
 
     return feeds
