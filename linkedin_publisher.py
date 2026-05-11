@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
+from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -13,10 +15,94 @@ logger = logging.getLogger(__name__)
 
 LINKEDIN_API = "https://api.linkedin.com/v2"
 LINKEDIN_MAX_TEXT_LENGTH = 3000
+LINKEDIN_PREVIEW_FETCH_TIMEOUT_SECONDS = 10
+
+
+class _PreviewImageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.primary_url: str | None = None
+        self.fallback_url: str | None = None
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        values = {
+            name.lower(): value.strip()
+            for name, value in attrs
+            if value is not None and value.strip()
+        }
+
+        if tag.lower() == "meta":
+            content = values.get("content", "")
+            if not content:
+                return
+
+            property_name = values.get("property", "").lower()
+            if property_name in {"og:image", "og:image:url", "og:image:secure_url"}:
+                if not self.primary_url:
+                    self.primary_url = content
+                return
+
+            name = values.get("name", "").lower()
+            if name in {"twitter:image", "twitter:image:src"} and not self.fallback_url:
+                self.fallback_url = content
+            return
+
+        if tag.lower() == "link":
+            rel_values = {item.lower() for item in values.get("rel", "").split()}
+            href = values.get("href", "")
+            if "image_src" in rel_values and href and not self.fallback_url:
+                self.fallback_url = href
 
 
 def _auth_headers(settings: Settings) -> dict[str, str]:
     return {"Authorization": f"Bearer {settings.linkedin_access_token}"}
+
+
+def _is_public_http_url(url: str) -> bool:
+    scheme = urlsplit(url).scheme.lower()
+    return scheme in {"http", "https"}
+
+
+def extract_preview_image_url(html: str, page_url: str) -> str | None:
+    parser = _PreviewImageParser()
+    parser.feed(html)
+
+    image_url = parser.primary_url or parser.fallback_url
+    if not image_url:
+        return None
+
+    absolute_url = urljoin(page_url, image_url.strip())
+    return absolute_url if _is_public_http_url(absolute_url) else None
+
+
+def fetch_preview_image_url(source_url: str) -> str | None:
+    if not _is_public_http_url(source_url):
+        return None
+
+    try:
+        response = requests.get(
+            source_url,
+            timeout=LINKEDIN_PREVIEW_FETCH_TIMEOUT_SECONDS,
+            headers={"User-Agent": "news-parser/1.0"},
+        )
+        response.raise_for_status()
+    except Exception as error:
+        logger.warning(
+            "LinkedIn preview image fetch failed for %s: %s",
+            source_url,
+            error,
+        )
+        return None
+
+    content_type = response.headers.get("Content-Type", "")
+    if "html" not in content_type.lower():
+        return None
+
+    return extract_preview_image_url(response.text, source_url)
 
 
 def get_linkedin_urn(settings: Settings) -> str | None:
@@ -95,21 +181,31 @@ def publish_to_linkedin(
     }
     source_url = str(post.get("source_url") or "").strip()
     if source_url:
+        media_item: dict[str, Any] = {
+            "status": "READY",
+            "originalUrl": source_url,
+            "title": {"text": str(post.get("title") or "").strip()},
+            "description": {
+                "text": str(post.get("description") or post.get("body") or "").strip()[
+                    :220
+                ]
+            },
+        }
+        thumbnail_url = str(post.get("thumbnail_url") or "").strip()
+        if not thumbnail_url:
+            thumbnail_url = fetch_preview_image_url(source_url) or ""
+        if thumbnail_url:
+            media_item["thumbnails"] = [
+                {
+                    "url": thumbnail_url,
+                    "altText": str(post.get("title") or "").strip()[:120],
+                }
+            ]
+
         share_content = {
             "shareCommentary": {"text": build_linkedin_text(post)},
             "shareMediaCategory": "ARTICLE",
-            "media": [
-                {
-                    "status": "READY",
-                    "originalUrl": source_url,
-                    "title": {"text": str(post.get("title") or "").strip()},
-                    "description": {
-                        "text": str(
-                            post.get("description") or post.get("body") or ""
-                        ).strip()[:220]
-                    },
-                }
-            ],
+            "media": [media_item],
         }
 
     payload = {
