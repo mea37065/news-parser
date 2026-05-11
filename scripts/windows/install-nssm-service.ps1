@@ -4,10 +4,23 @@ param(
     [string]$PythonExe = "",
     [string]$NssmExe = "nssm",
     [string]$RunAsUser = "",
+    [securestring]$RunAsPassword,
     [switch]$Start
 )
 
 $ErrorActionPreference = "Stop"
+
+function Invoke-Nssm {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    & $NssmExe @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "nssm $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+    }
+}
 
 if (-not $PythonExe) {
     $PythonExe = Join-Path $ProjectDir "venv\Scripts\python.exe"
@@ -32,24 +45,51 @@ if (-not (Test-Path (Join-Path $ProjectDir ".env"))) {
 
 New-Item -ItemType Directory -Force -Path $LogsDir | Out-Null
 
-& $NssmExe install $ServiceName $PythonExe $BotScript
-& $NssmExe set $ServiceName AppDirectory $ProjectDir
-& $NssmExe set $ServiceName DisplayName "News Parser Bot"
-& $NssmExe set $ServiceName Description "Parses RSS feeds, sends Telegram review messages, and publishes approved posts to LinkedIn."
-& $NssmExe set $ServiceName Start SERVICE_AUTO_START
-& $NssmExe set $ServiceName AppStdout $StdoutLog
-& $NssmExe set $ServiceName AppStderr $StderrLog
-& $NssmExe set $ServiceName AppRotateFiles 1
-& $NssmExe set $ServiceName AppRotateOnline 1
-& $NssmExe set $ServiceName AppRotateBytes 10485760
+Invoke-Nssm -Arguments @("install", $ServiceName, $PythonExe, $BotScript)
+Invoke-Nssm -Arguments @("set", $ServiceName, "AppDirectory", $ProjectDir)
+Invoke-Nssm -Arguments @("set", $ServiceName, "DisplayName", "News Parser Bot")
+Invoke-Nssm -Arguments @(
+    "set",
+    $ServiceName,
+    "Description",
+    "Parses RSS feeds, sends Telegram review messages, and publishes approved posts to LinkedIn."
+)
+Invoke-Nssm -Arguments @("set", $ServiceName, "Start", "SERVICE_AUTO_START")
+Invoke-Nssm -Arguments @("set", $ServiceName, "AppStdout", $StdoutLog)
+Invoke-Nssm -Arguments @("set", $ServiceName, "AppStderr", $StderrLog)
+Invoke-Nssm -Arguments @("set", $ServiceName, "AppRotateFiles", "1")
+Invoke-Nssm -Arguments @("set", $ServiceName, "AppRotateOnline", "1")
+Invoke-Nssm -Arguments @("set", $ServiceName, "AppRotateBytes", "10485760")
 
 if ($RunAsUser) {
-    Write-Host "Setting service account for $ServiceName. NSSM will ask for the account password."
-    & $NssmExe set $ServiceName ObjectName $RunAsUser
+    if (-not $RunAsPassword) {
+        $RunAsPassword = Read-Host -AsSecureString -Prompt "Password for $RunAsUser"
+    }
+
+    $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
+        $RunAsPassword
+    )
+    try {
+        $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+            $passwordPointer
+        )
+        Invoke-Nssm -Arguments @(
+            "set",
+            $ServiceName,
+            "ObjectName",
+            $RunAsUser,
+            $plainPassword
+        )
+    }
+    finally {
+        if ($passwordPointer -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+        }
+    }
 }
 
 if ($Start) {
-    & $NssmExe start $ServiceName
+    Invoke-Nssm -Arguments @("start", $ServiceName)
 }
 
 Write-Host "Installed $ServiceName with NSSM."
