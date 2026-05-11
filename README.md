@@ -78,6 +78,43 @@ Windows bootstrap script:
 .\start.bat
 ```
 
+## Windows Server With Credential Manager
+
+The app can read secrets from Windows Credential Manager. Keep non-secret settings
+in `.env`, but leave token values blank there if you store them in Credential
+Manager.
+
+Run this from the project directory as the same Windows account that will run the
+service:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\set-credentials.ps1
+```
+
+The script stores these generic credentials:
+
+```text
+NewsParser/TELEGRAM_BOT_TOKEN
+NewsParser/TELEGRAM_CHAT_ID
+NewsParser/LINKEDIN_ACCESS_TOKEN
+NewsParser/GROQ_API_KEY
+```
+
+If you use a different prefix, set it both when storing credentials and in
+`.env`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\set-credentials.ps1 -TargetPrefix "MyPrefix"
+```
+
+```env
+CREDENTIAL_TARGET_PREFIX=MyPrefix
+```
+
+Credential Manager entries are tied to the Windows account. If you run the app as
+a Windows Service through NSSM, configure the service `Log on` account to be the
+same account used to store these credentials.
+
 ## Run Modes
 
 Main bot loop:
